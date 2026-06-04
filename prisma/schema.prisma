@@ -1,0 +1,119 @@
+// =============================================================================
+// Prisma Schema — F1 TeamBuilder
+// =============================================================================
+// Data source: Neon PostgreSQL (serverless, pooled connections)
+// Generator: Prisma Client with Neon adapter
+//
+// Connection URLs are configured in prisma.config.ts (Prisma 7+)
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// =============================================================================
+// NextAuth.js Models
+// =============================================================================
+// These models are required by NextAuth for session management.
+// See: https://authjs.dev/getting-started/adapters/prisma
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  accounts      Account[]
+  sessions      Session[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // --- Game Relations (add fields as you build) ---
+  // draftSessions DraftSession[]
+  // rosters       Roster[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// =============================================================================
+// Game Models — Skeletons
+// =============================================================================
+// These are placeholder models. Flesh out the fields as you build each feature.
+
+model DraftSession {
+  id        String   @id @default(cuid())
+  userId    String
+  status    String   @default("in_progress") // in_progress | completed | abandoned
+  spinsUsed Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // TODO: Add relations to selected components, roster, etc.
+}
+
+model Roster {
+  id             String   @id @default(cuid())
+  userId         String
+  draftSessionId String
+  createdAt      DateTime @default(now())
+
+  // TODO: Add fields for each team component (driver1, driver2, chassis, etc.)
+}
+
+model HistoricalData {
+  id   String @id @default(cuid())
+  era  String // e.g., "2004", "2021"
+  team String // e.g., "Ferrari", "Red Bull"
+
+  // TODO: Add performance ratings, driver pool, component stats, etc.
+}
+
+model LeaderboardEntry {
+  id               String   @id @default(cuid())
+  userId           String
+  rosterId         String
+  totalPoints      Int      @default(0)
+  wins             Int      @default(0)
+  perfectSeason    Boolean  @default(false) // 24-0 achievement
+  seasonCompletedAt DateTime @default(now())
+
+  // TODO: Add detailed race results, ranking logic
+}

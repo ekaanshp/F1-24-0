@@ -1,0 +1,76 @@
+# =============================================================================
+# Docker Compose — F1 TeamBuilder (Local Development)
+# =============================================================================
+# Services:
+#   - redis: In-memory cache for draft engine, leaderboard sorted sets
+#   - simulation-engine: Isolated container for CPU-intensive race simulation
+#                        (placeholder — build when you implement simulation logic)
+# =============================================================================
+# NOTE: PostgreSQL is NOT included here because you're using Neon (managed).
+#       If you need a local Postgres for offline dev, uncomment the section below.
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Redis — Cache & Leaderboard
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: f1-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Simulation Engine — Isolated service for race calculations
+  # ---------------------------------------------------------------------------
+  # This service runs your "heavy math" separately from the web UI.
+  # Scale independently: docker compose up --scale simulation-engine=3
+  # ---------------------------------------------------------------------------
+  simulation-engine:
+    build:
+      context: ./services/simulation
+      dockerfile: Dockerfile
+    container_name: f1-simulation
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - NODE_ENV=development
+    depends_on:
+      redis:
+        condition: service_healthy
+    # ports:
+    #   - "4000:4000"  # Uncomment when you add an HTTP API to the sim engine
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # (Optional) Local PostgreSQL — Uncomment for offline development
+  # ---------------------------------------------------------------------------
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: f1-postgres
+  #   ports:
+  #     - "5432:5432"
+  #   environment:
+  #     POSTGRES_USER: f1user
+  #     POSTGRES_PASSWORD: f1password
+  #     POSTGRES_DB: f1teambuilder
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U f1user -d f1teambuilder"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #   restart: unless-stopped
+
+volumes:
+  redis-data:
+  # postgres-data:  # Uncomment if using local Postgres

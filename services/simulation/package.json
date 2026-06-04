@@ -1,0 +1,15 @@
+{
+  "name": "f1-simulation-engine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone simulation engine for F1 TeamBuilder race calculations",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {},
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}
