@@ -6,6 +6,11 @@
 // =============================================================================
 
 import path from 'node:path';
+import { loadEnvConfig } from '@next/env';
+
+// Load environment variables from .env.local / .env files
+loadEnvConfig(process.cwd());
+
 import { defineConfig } from 'prisma/config';
 
 export default defineConfig({
