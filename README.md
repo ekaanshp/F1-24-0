@@ -134,7 +134,11 @@ src/
     └── ui/                 # UI components
 
 services/
-└── simulation/             # Standalone simulation engine (Docker)
+├── simulation/             # Standalone simulation engine (Docker)
+│   ├── Dockerfile
+│   ├── package.json
+│   └── index.js
+└── data-pipeline/          # Standalone data pipeline (Docker)
     ├── Dockerfile
     ├── package.json
     └── index.js

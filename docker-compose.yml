@@ -51,6 +51,22 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
+  # Data Pipeline — Standalone service for data ingestion & processing
+  # ---------------------------------------------------------------------------
+  data-pipeline:
+    build:
+      context: ./services/data-pipeline
+      dockerfile: Dockerfile
+    container_name: f1-data-pipeline
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - NODE_ENV=development
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
   # (Optional) Local PostgreSQL — Uncomment for offline development
   # ---------------------------------------------------------------------------
   # postgres:
