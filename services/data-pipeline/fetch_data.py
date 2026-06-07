@@ -1,4 +1,5 @@
-import os
+﻿import os
+from pathlib import Path
 import pandas as pd
 import psycopg2
 from sqlalchemy import create_engine
@@ -6,15 +7,52 @@ from racinghub_client import ApiClient, Configuration
 from racinghub_client.api import drivers_api
 from dotenv import load_dotenv
 
-# Load credentials from your root .env file
-load_dotenv(dotenv_path="../../.env.local")
+# Resolve paths relative to this script
+SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = SCRIPT_DIR.parents[1]
+load_dotenv(dotenv_path=ROOT_DIR / ".env.local")
+DRIVER_IDS_FILE = SCRIPT_DIR / "driver_names_v2.txt"
+
+
+def read_driver_ids(path: Path):
+    if not path.exists():
+        raise FileNotFoundError(f"Driver list not found: {path}")
+
+    driver_ids = []
+    with path.open("r", encoding="utf-8") as file:
+        for line in file:
+            driver_id = line.strip()
+            if not driver_id or driver_id.startswith("#"):
+                continue
+            driver_ids.append(driver_id)
+
+    return driver_ids
+
+
+def fetch_driver_seasons(api, driver_id: str):
+    try:
+        results = api.get_driver_seasons(driver_id)
+    except Exception as exc:
+        print(f"Warning: failed to fetch seasons for {driver_id}: {exc}")
+        return []
+
+    return [record.model_dump() for record in results or []]
+
+
+def normalize_dataframe(df: pd.DataFrame):
+    for col in df.columns:
+        if df[col].apply(lambda x: isinstance(x, dict)).any():
+            df[col] = df[col].apply(lambda x: str(x) if isinstance(x, dict) else x)
+
+    if "grid_position" in df.columns and "position" in df.columns:
+        df["positions_gained"] = df["grid_position"] - df["position"]
+
+    return df
+
 
 def main():
-    # 1. Setup the RacingHub Client
     config = Configuration(host="https://racinghub.net/api/v1")
 
-    # 2. Database setup using SQLAlchemy
-    # DATABASE_URL comes from your .env file
     db_url = os.getenv("DATABASE_URL")
     if not db_url:
         print("Error: DATABASE_URL not found in .env file!")
@@ -22,29 +60,46 @@ def main():
 
     engine = create_engine(db_url)
 
-    # 3. Fetch data from RacingHub
-    print("Fetching data from RacingHub...")
+    try:
+        driver_ids = read_driver_ids(DRIVER_IDS_FILE)
+    except FileNotFoundError as exc:
+        print(exc)
+        return
+
+    if not driver_ids:
+        print(f"No driver IDs found in {DRIVER_IDS_FILE}")
+        return
+
+    all_rows = []
+    print(f"Fetching seasons for {len(driver_ids)} drivers...")
+
     with ApiClient(config) as api_client:
         api = drivers_api.DriversApi(api_client)
-        results = api.get_driver_races_results("lewis-hamilton", limit=100)
-        
-        # 4. Transform data using Pandas
-        df = pd.DataFrame([r.model_dump() for r in results.data])
-        df["positions_gained"] = df["grid_position"] - df["position"]
 
-        # Identify columns that are dictionaries and convert them to strings
-        for col in df.columns:
-            # Check if any value in the column is a dict
-            if df[col].apply(lambda x: isinstance(x, dict)).any():
-                df[col] = df[col].apply(lambda x: str(x) if isinstance(x, dict) else x)
-        
-        # 5. Save to Neon database
-        # 'if_exists="replace"' makes this safe for testing
-        print("Saving data to Neon...")
-        df.to_sql("driver_results", engine, if_exists="replace", index=False)
-        
-        print("Data saved to Neon database successfully!")
+        for driver_id in driver_ids:
+            print(f"  - fetching seasons for: {driver_id}")
+            rows = fetch_driver_seasons(api, driver_id)
+            if not rows:
+                print(f"    no season data or fetch error for {driver_id}")
+                continue
+            all_rows.extend(rows)
+
+    if not all_rows:
+        print("No driver results were loaded from the API.")
+        return
+
+    df = pd.DataFrame(all_rows)
+    df = normalize_dataframe(df)
+
+    print(f"Saving {len(df)} rows to Neon...")
+    df.to_sql("driver_seasons", engine, if_exists="replace", index=False)
+
+    print("Data saved to Neon database successfully!")
+    if {"race_date", "circuit_name", "positions_gained"}.issubset(df.columns):
         print(df[["race_date", "circuit_name", "positions_gained"]].head())
+    else:
+        print(df.head())
+
 
 if __name__ == "__main__":
     main()
