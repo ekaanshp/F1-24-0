@@ -1,15 +1,18 @@
 import os
-from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
+from dotenv import load_dotenv
 
-# Load your config
-load_dotenv('../../.env.local')
+load_dotenv("../../.env.local")
+engine = create_engine(os.getenv("DATABASE_URL"))
 
-# Connect
-engine = create_engine(os.getenv('DATABASE_URL'))
-
-# Count
 with engine.connect() as conn:
-    result = conn.execute(text("SELECT COUNT(*) FROM driver_results"))
-    count = result.scalar()
-    print(f"--- DATABASE COUNT: {count} ---")
+    # 1. Let's see what tables actually exist
+    tables = conn.execute(text("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")).fetchall()
+    print("Tables found:", [t[0] for t in tables])
+    
+    # 2. Let's look at the columns inside driver_seasons
+    try:
+        cols = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'driver_seasons'")).fetchall()
+        print("Columns in driver_seasons:", [c[0] for c in cols])
+    except Exception as e:
+        print("Error reading columns:", e)
