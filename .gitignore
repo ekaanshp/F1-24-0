@@ -98,3 +98,7 @@ ENV/
 env/
 __pycache__/
 *.pyc
+
+# Game Formulas
+services/data-pipeline/formula.txt
+
