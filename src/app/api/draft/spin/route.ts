@@ -1,28 +1,25 @@
-// =============================================================================
-// POST /api/draft/spin — F1 TeamBuilder
-// =============================================================================
-// Generates a randomized Team + Era for the current spin.
-// The spin result is server-authoritative to prevent client spoofing.
-//
-// TODO(security): Implement rate limiting to prevent RNG abuse
-// TODO(security): Validate user session before processing spin
-// TODO(security): Verify draft session ownership (user can only spin their own)
-// TODO: Implement the actual spin logic (RNG, era/team selection)
-// =============================================================================
+import { NextRequest, NextResponse } from 'next/server';
+import { getNextDraftSpin } from '@/services/draft';
 
-import { NextResponse } from 'next/server';
+export async function POST(request: NextRequest) {
+  const body = await request.json().catch(() => ({}));
+  const draftId = typeof body.draftId === 'string' ? body.draftId : undefined;
 
-export async function POST() {
-  // TODO: Implement spin logic
-  // 1. Authenticate user session
-  // 2. Validate active draft session exists and belongs to user
-  // 3. Check remaining spins
-  // 4. Generate randomized team/era from HistoricalData
-  // 5. Store spin result server-side (prevent client spoofing)
-  // 6. Return spin result to client
-
-  return NextResponse.json(
-    { message: 'POST /api/draft/spin — Not yet implemented' },
-    { status: 501 },
-  );
+  try {
+    const state = await getNextDraftSpin(draftId);
+    return NextResponse.json({
+      draftId: state.draftId,
+      year: state.year,
+      slotIndex: state.slotIndex,
+      totalSlots: 8,
+      options: state.options,
+      selections: state.selections,
+      isComplete: state.slotIndex >= 8,
+    });
+  } catch (error) {
+    return NextResponse.json(
+      { message: (error as Error).message || 'Draft spin failed' },
+      { status: 500 },
+    );
+  }
 }
