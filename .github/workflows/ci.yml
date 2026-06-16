@@ -15,6 +15,10 @@ on:
 
 env:
   NODE_VERSION: '20'
+  DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/f1teambuilder?sslmode=disable'
+  DIRECT_DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/f1teambuilder?sslmode=disable'
+  REDIS_URL: 'redis://localhost:6379'
+  NEXTAUTH_SECRET: '32-character-dummy-secret-key-for-ci-runs'
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -43,7 +47,7 @@ jobs:
         run: npm run lint
 
       - name: Run TypeScript type check
-        run: npx tsc --noEmit
+        run: npm run typecheck
 
   # ---------------------------------------------------------------------------
   # Build
@@ -78,6 +82,33 @@ jobs:
     name: E2E Tests
     runs-on: ubuntu-latest
     needs: build
+
+    # Spin up test services (Postgres & Redis)
+    services:
+      postgres:
+        image: postgres:15-alpine
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: f1teambuilder
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -93,6 +124,9 @@ jobs:
 
       - name: Generate Prisma client
         run: npx prisma generate
+
+      - name: Push Prisma schema to test database
+        run: npx prisma db push
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
