@@ -27,14 +27,10 @@ model User {
   email         String?   @unique
   emailVerified DateTime?
   image         String?
-  accounts      Account[]
-  sessions      Session[]
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
-
-  // --- Game Relations (add fields as you build) ---
-  // draftSessions DraftSession[]
-  // rosters       Roster[]
+  accounts      Account[]
+  sessions      Session[]
 }
 
 model Account {
@@ -50,8 +46,7 @@ model Account {
   scope             String?
   id_token          String?
   session_state     String?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
 }
@@ -61,8 +56,7 @@ model Session {
   sessionToken String   @unique
   userId       String
   expires      DateTime
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model VerificationToken {
@@ -74,9 +68,8 @@ model VerificationToken {
 }
 
 // =============================================================================
-// Game Models — Skeletons
+// Game Models
 // =============================================================================
-// These are placeholder models. Flesh out the fields as you build each feature.
 
 model DraftSession {
   id        String   @id @default(cuid())
@@ -85,8 +78,6 @@ model DraftSession {
   spinsUsed Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  // TODO: Add relations to selected components, roster, etc.
 }
 
 model Roster {
@@ -94,26 +85,146 @@ model Roster {
   userId         String
   draftSessionId String
   createdAt      DateTime @default(now())
-
-  // TODO: Add fields for each team component (driver1, driver2, chassis, etc.)
 }
 
 model HistoricalData {
   id   String @id @default(cuid())
-  era  String // e.g., "2004", "2021"
-  team String // e.g., "Ferrari", "Red Bull"
-
-  // TODO: Add performance ratings, driver pool, component stats, etc.
+  era  String
+  team String
 }
 
 model LeaderboardEntry {
-  id               String   @id @default(cuid())
-  userId           String
-  rosterId         String
-  totalPoints      Int      @default(0)
-  wins             Int      @default(0)
-  perfectSeason    Boolean  @default(false) // 24-0 achievement
+  id                String   @id @default(cuid())
+  userId            String
+  rosterId          String
+  totalPoints       Int      @default(0)
+  wins              Int      @default(0)
+  perfectSeason     Boolean  @default(false)
   seasonCompletedAt DateTime @default(now())
+}
 
-  // TODO: Add detailed race results, ranking logic
+// =============================================================================
+// F1 Raw Data Tables (populated by data-pipeline scripts)
+// =============================================================================
+// These tables are populated via SQLAlchemy/Pandas in the services/data-pipeline
+// directory. They store raw historical F1 data fetched from the RacingHub API.
+
+/// Per-season driver statistics fetched from the RacingHub API.
+/// Source: services/data-pipeline/fetch_data.py
+model driver_seasons {
+  id             Int     @id @default(autoincrement())
+  driver_id      String?
+  driver_name    String?
+  year           BigInt?
+  position       BigInt?
+  points         Float?
+  race_wins      BigInt?
+  pole_positions BigInt?
+  constructors   String?
+
+  @@index([driver_id], map: "idx_driver_seasons_driver_id")
+  @@index([year], map: "idx_driver_seasons_year")
+}
+
+/// Per-season constructor standings fetched from the RacingHub API.
+/// Source: services/data-pipeline/fetch_data.py
+model constructor_seasons {
+  id               Int     @id @default(autoincrement())
+  constructor_id   String?
+  constructor_name String?
+  year             BigInt?
+  position         BigInt?
+  points           Float?
+  race_wins        BigInt?
+  pole_positions   BigInt?
+
+  @@index([constructor_id], map: "idx_constructor_seasons_constructor_id")
+  @@index([year], map: "idx_constructor_seasons_year")
+}
+
+/// Per-season constructor data joined with engine manufacturer info.
+/// Source: services/data-pipeline/fetch_constructor_data_with_engine.py
+model constructor_seasons_with_engines {
+  id                       Int     @id @default(autoincrement())
+  year                     BigInt?
+  team_name                String?
+  engine_manufacturer_name String?
+  position                 BigInt?
+  points                   Float?
+  race_wins                BigInt?
+  pole_positions           BigInt?
+
+  @@index([engine_manufacturer_name], map: "idx_cswe_engine")
+  @@index([year], map: "idx_cswe_year")
+}
+
+// =============================================================================
+// F1 Personnel Tables (populated by data-pipeline upload_personnel.py)
+// =============================================================================
+
+/// Car designers mapped to teams per season.
+/// Source: services/data-pipeline/upload_personnel.py + car_designers.csv
+model car_designers {
+  id   Int    @id @default(autoincrement())
+  year Int
+  name String
+  team String
+}
+
+/// Team principals mapped to teams per season.
+/// Source: services/data-pipeline/upload_personnel.py + team_principals.csv
+model team_principals {
+  id   Int    @id @default(autoincrement())
+  year Int
+  name String
+  team String
+}
+
+/// Chief/race engineers mapped to teams and drivers per season.
+/// Source: services/data-pipeline/upload_personnel.py + team_engineers.csv
+model team_engineers {
+  id     Int     @id @default(autoincrement())
+  year   Int
+  name   String
+  team   String
+  driver String?
+}
+
+// =============================================================================
+// Computed Ratings Tables (populated by data-pipeline compute_ratings.py)
+// =============================================================================
+// These tables are DROP/CREATE'd each time compute_ratings.py runs.
+// They store the final processed ratings used by the Next.js application.
+
+/// Per-season ratings for all component types (drivers, chassis, engines,
+/// team principals, chief engineers, car designers).
+/// Source: services/data-pipeline/compute_ratings.py
+model component_ratings {
+  id               Int     @id @default(autoincrement())
+  year             Int
+  role             String  // driver | chassis | engine | team_principal | chief_engineer | car_designer
+  component_name   String
+  team             String?
+  raw_score        Float
+  normalized_score Float
+  rating           Float
+  source           String  // table name this rating was derived from
+
+  @@index([year, role], map: "idx_component_ratings_year_role")
+  @@index([component_name], map: "idx_component_ratings_component_name")
+}
+
+/// Career-aggregated ratings using peak-weighted recency decay.
+/// Source: services/data-pipeline/compute_ratings.py
+model career_ratings {
+  id                  Int    @id @default(autoincrement())
+  role                String // driver | chassis | engine | team_principal | chief_engineer | car_designer
+  component_name      String
+  career_overall      Float
+  seasons_count       Int
+  peak_season_overall Float
+  latest_year         Int
+
+  @@index([role], map: "idx_career_ratings_role")
+  @@index([component_name], map: "idx_career_ratings_name")
 }
