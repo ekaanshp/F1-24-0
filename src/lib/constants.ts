@@ -7,12 +7,13 @@ export const TEAM_SLOTS = [
   'driver1',
   'driver2',
   'chassis',
-  'pitCrew',
   'engine',
   'teamPrincipal',
   'chiefEngineer',
+  'carDesigner',
   'wildcard', // Aero / Special component
 ] as const;
+
 
 /** Total number of spins in a draft session (one per slot) */
 export const TOTAL_SPINS = TEAM_SLOTS.length; // 8

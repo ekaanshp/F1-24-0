@@ -1,4 +1,23 @@
 #!/usr/bin/env python3
+# =============================================================================
+# compute_ratings.py — F1 TeamBuilder Rating Pipeline
+# =============================================================================
+# Computes per-season and career-aggregated ratings for:
+#   - Drivers
+#   - Constructors (Chassis)
+#   - Engine Manufacturers
+#   - Team Principals
+#   - Chief Engineers
+#   - Car Designers
+#
+# Implements the formulas defined in formula.txt with:
+#   - Rate-based metrics (never raw totals)
+#   - Era-relative Z-score normalization
+#   - Percentile mapping via Φ (CDF of standard normal)
+#   - Weighted sub-attribute composites
+#   - Peak-weighted recency decay career aggregation
+# =============================================================================
+
 import math
 import os
 from pathlib import Path
@@ -6,6 +25,10 @@ from pathlib import Path
 import pandas as pd
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT_DIR = SCRIPT_DIR.parents[1]
@@ -17,6 +40,12 @@ if not DB_URL:
 
 engine = create_engine(DB_URL)
 
+# Career aggregation parameters (formula.txt Section 1, Step 5)
+CAREER_DECAY_ALPHA = 0.92       # Each year further from latest is weighted 8% less
+CAREER_PEAK_BONUS = 1.3         # Top peak seasons get 30% extra weight
+CAREER_PEAK_COUNT = 2           # Number of top seasons that receive the peak bonus
+
+# Races per season (formula.txt Section 7A)
 RACES_PER_YEAR = {
     1950: 7, 1951: 8, 1952: 8, 1953: 9, 1954: 9, 1955: 7, 1956: 8, 1957: 8, 1958: 11,
     1959: 9, 1960: 10, 1961: 8, 1962: 9, 1963: 10, 1964: 10, 1965: 10, 1966: 9,
@@ -31,17 +60,24 @@ RACES_PER_YEAR = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Utility Functions
+# ---------------------------------------------------------------------------
+
 def clamp(value: float, minimum: float = 30.0, maximum: float = 99.0) -> float:
+    """Clamp a value to [minimum, maximum]. Default: [30, 99]."""
     return float(max(minimum, min(maximum, value)))
 
 
 def normal_cdf(z: pd.Series | float) -> pd.Series | float:
+    """Compute the CDF of the standard normal distribution: Φ(z)."""
     if isinstance(z, pd.Series):
         return 0.5 * (1.0 + z.apply(lambda x: math.erf(x / math.sqrt(2))))
     return 0.5 * (1.0 + math.erf(z / math.sqrt(2)))
 
 
 def z_score(series: pd.Series) -> pd.Series:
+    """Compute Z-scores for a series. Returns 0 if σ=0 (all identical)."""
     std = series.std(ddof=0)
     if std == 0 or math.isnan(std):
         return pd.Series(0.0, index=series.index)
@@ -49,31 +85,48 @@ def z_score(series: pd.Series) -> pd.Series:
 
 
 def get_race_count(year: int) -> int:
+    """Return the number of races for a given season."""
     return RACES_PER_YEAR.get(year, 24)
 
 
 def max_win_points(year: int) -> int:
-    if year <= 1959:
+    """Return the maximum points awarded for a race win in the given year.
+    Formula.txt Section 7B."""
+    if year <= 1960:
         return 8
-    if year == 1960:
-        return 8
+    if year <= 1990:
+        return 9
     if year <= 2009:
         return 10
     return 25
 
 
 def second_place_points(year: int) -> int:
+    """Return the points awarded for second place in the given year.
+    Formula.txt Section 7B."""
+    if year <= 1960:
+        return 6
+    if year <= 1990:
+        return 6
+    if year <= 2002:
+        return 6
     if year <= 2009:
-        return 6 if year <= 2002 else 8
+        return 8
     return 18
 
 
+# ---------------------------------------------------------------------------
+# Data Loading
+# ---------------------------------------------------------------------------
+
 def load_table(table_name: str) -> pd.DataFrame:
+    """Load an entire table from the database."""
     with engine.connect() as conn:
         return pd.read_sql(text(f'SELECT * FROM {table_name}'), conn)
 
 
 def load_year_counts() -> pd.DataFrame:
+    """Load per-year counts of distinct drivers N(Y) and constructors T(Y)."""
     with engine.connect() as conn:
         drivers = pd.read_sql(
             text('SELECT year, COUNT(DISTINCT driver_id) AS n_drivers FROM driver_seasons GROUP BY year'),
@@ -83,10 +136,15 @@ def load_year_counts() -> pd.DataFrame:
             text('SELECT year, COUNT(DISTINCT constructor_id) AS n_constructors FROM constructor_seasons GROUP BY year'),
             conn,
         )
-    return drivers.merge(constructors, on='year', how='outer').fillna(0).astype({'year': int, 'n_drivers': int, 'n_constructors': int})
+    return (
+        drivers.merge(constructors, on='year', how='outer')
+        .fillna(0)
+        .astype({'year': int, 'n_drivers': int, 'n_constructors': int})
+    )
 
 
 def map_year_metadata(df: pd.DataFrame) -> pd.DataFrame:
+    """Add race_count, max_win_points, max_constructor_points, max_points_available columns."""
     df = df.copy()
     df['year'] = df['year'].astype(int)
     df['race_count'] = df['year'].map(get_race_count)
@@ -96,45 +154,116 @@ def map_year_metadata(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ---------------------------------------------------------------------------
+# Career Aggregation (formula.txt Section 1, Step 5)
+# ---------------------------------------------------------------------------
+
+def compute_career_overall(season_df: pd.DataFrame, entity_col: str) -> pd.DataFrame:
+    """Compute career overall ratings using peak-weighted recency decay.
+
+    For each entity, the career overall is:
+        career_overall = Σ [w(Y) × season_overall(Y)] / Σ w(Y)
+
+    where:
+        w(Y) = α^(Y_latest - Y) × peak_bonus(Y)
+        α = 0.92  (8% decay per year from latest season)
+        peak_bonus = 1.3 for top 2 seasons, 1.0 otherwise
+    """
+    results = []
+
+    for entity_name, group in season_df.groupby(entity_col):
+        group = group.sort_values('year')
+        y_latest = group['year'].max()
+
+        # Identify peak seasons (top CAREER_PEAK_COUNT by season_overall)
+        peak_threshold = group['season_overall'].nlargest(CAREER_PEAK_COUNT).min()
+        is_peak = group['season_overall'] >= peak_threshold
+
+        # Compute weights
+        recency_weight = CAREER_DECAY_ALPHA ** (y_latest - group['year'])
+        peak_bonus = is_peak.map({True: CAREER_PEAK_BONUS, False: 1.0})
+        weights = recency_weight * peak_bonus
+
+        # Weighted average
+        career_ovr = clamp((weights * group['season_overall']).sum() / weights.sum())
+
+        results.append({
+            entity_col: entity_name,
+            'career_overall': career_ovr,
+            'seasons_count': len(group),
+            'peak_season_overall': group['season_overall'].max(),
+            'latest_year': y_latest,
+        })
+
+    return pd.DataFrame(results)
+
+
+# ---------------------------------------------------------------------------
+# Driver Ratings (formula.txt Section 2)
+# ---------------------------------------------------------------------------
+
 def build_driver_season_ratings(driver_df: pd.DataFrame, year_counts: pd.DataFrame) -> pd.DataFrame:
+    """Compute per-season driver ratings.
+
+    DRIVER OVERALL = 0.30 × DOMINANCE
+                   + 0.25 × RACE_CRAFT
+                   + 0.20 × QUALIFYING_PROWESS
+                   + 0.15 × CONSISTENCY
+                   + 0.10 × CHAMPIONSHIP_PEDIGREE
+    """
     df = driver_df.copy()
     df = map_year_metadata(df)
     df = df.merge(year_counts, on='year', how='left')
     df['n_drivers'] = df['n_drivers'].replace(0, 1)
 
+    # --- Sub-attribute 1: DOMINANCE (0.30) ---
+    # dom_rate = sqrt(win_rate × points_rate) — geometric mean
     df['win_rate'] = df['race_wins'].fillna(0) / df['race_count']
     df['points_rate'] = df['points'].fillna(0) / df['max_points_available']
     df['dominance_rate'] = (df['win_rate'] * df['points_rate']).pow(0.5)
+
+    # --- Sub-attribute 2: RACE_CRAFT (0.25) ---
+    # PAWE = 0.6 × win_rate + 0.4 × normalized_position
     df['normalized_position'] = df.apply(
         lambda row: 1.0 if row['n_drivers'] <= 1 else 1.0 - ((row['position'] - 1) / (row['n_drivers'] - 1)),
         axis=1,
     )
     df['PAWE'] = 0.6 * df['win_rate'] + 0.4 * df['normalized_position']
+
+    # --- Sub-attribute 3: QUALIFYING_PROWESS (0.20) ---
     df['pole_rate'] = df['pole_positions'].fillna(0) / df['race_count']
+
+    # --- Sub-attribute 4: CONSISTENCY (0.15) ---
+    # consistency_raw = points_harvest_rate / max(points_harvest_rate in year)
     df['points_harvest_rate'] = df['points'].fillna(0) / df['max_points_available']
     df['consistency_raw'] = df['points_harvest_rate'] / df.groupby('year')['points_harvest_rate'].transform('max').replace(0, 1)
+
+    # --- Sub-attribute 5: CHAMPIONSHIP_PEDIGREE (0.10) ---
+    # Direct percentile mapping, NO z-score (already era-normalized)
     df['champ_percentile'] = df.apply(
         lambda row: 1.0 if row['n_drivers'] <= 1 else 1.0 - ((row['position'] - 1) / (row['n_drivers'] - 1)),
         axis=1,
     )
 
+    # --- Apply Z-score → Φ → 0-100 → clamp for sub-attributes 1-4 ---
     df['dominance_score'] = df.groupby('year')['dominance_rate'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
     df['race_craft_score'] = df.groupby('year')['PAWE'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
     df['qualifying_score'] = df.groupby('year')['pole_rate'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
     df['consistency_score'] = df.groupby('year')['consistency_raw'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
-    df['championship_score'] = df['champ_percentile'] * 100
-    df['championship_score'] = df['championship_score'].clip(30, 99)
+    df['championship_score'] = (df['champ_percentile'] * 100).clip(30, 99)
 
+    # --- Final weighted sum ---
     df['season_overall'] = (
         0.30 * df['dominance_score']
         + 0.25 * df['race_craft_score']
         + 0.20 * df['qualifying_score']
         + 0.15 * df['consistency_score']
         + 0.10 * df['championship_score']
-    )
-    df['season_overall'] = df['season_overall'].apply(clamp)
+    ).apply(clamp)
 
-    return df[['year', 'driver_id', 'driver_name', 'constructors', 'season_overall']].rename(
+    return df[['year', 'driver_id', 'driver_name', 'constructors', 'season_overall',
+               'dominance_score', 'race_craft_score', 'qualifying_score',
+               'consistency_score', 'championship_score']].rename(
         columns={
             'driver_name': 'component_name',
             'constructors': 'team',
@@ -142,79 +271,98 @@ def build_driver_season_ratings(driver_df: pd.DataFrame, year_counts: pd.DataFra
     )
 
 
+# ---------------------------------------------------------------------------
+# Constructor Ratings (formula.txt Section 3)
+# ---------------------------------------------------------------------------
+
 def build_constructor_season_ratings(constructor_df: pd.DataFrame, year_counts: pd.DataFrame) -> pd.DataFrame:
+    """Compute per-season constructor ratings.
+
+    CONSTRUCTOR OVERALL = 0.30 × PERFORMANCE
+                        + 0.30 × COMPETITIVENESS
+                        + 0.25 × ENGINEERING_EXCELLENCE
+                        + 0.15 × CHAMPIONSHIP_STANDING
+    """
     df = constructor_df.copy()
     df = map_year_metadata(df)
     df = df.merge(year_counts, on='year', how='left')
     df['n_constructors'] = df['n_constructors'].replace(0, 1)
 
+    # --- Sub-attribute 1: PERFORMANCE (0.30) ---
     df['win_rate'] = df['race_wins'].fillna(0) / df['race_count']
     df['performance_score'] = df.groupby('year')['win_rate'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
+
+    # --- Sub-attribute 2: COMPETITIVENESS (0.30) ---
     df['competitiveness_rate'] = df['points'].fillna(0) / df['max_constructor_points']
     df['competitiveness_score'] = df.groupby('year')['competitiveness_rate'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
+
+    # --- Sub-attribute 3: ENGINEERING_EXCELLENCE (0.25) ---
     df['pole_rate'] = df['pole_positions'].fillna(0) / df['race_count']
     df['engineering_score'] = df.groupby('year')['pole_rate'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
+
+    # --- Sub-attribute 4: CHAMPIONSHIP_STANDING (0.15) ---
+    # Direct percentile mapping, NO z-score
     df['championship_score'] = df.apply(
         lambda row: 1.0 if row['n_constructors'] <= 1 else 1.0 - ((row['position'] - 1) / (row['n_constructors'] - 1)),
         axis=1,
     ) * 100
     df['championship_score'] = df['championship_score'].clip(30, 99)
 
+    # --- Final weighted sum ---
     df['season_overall'] = (
         0.30 * df['performance_score']
         + 0.30 * df['competitiveness_score']
         + 0.25 * df['engineering_score']
         + 0.15 * df['championship_score']
-    )
-    df['season_overall'] = df['season_overall'].apply(clamp)
+    ).apply(clamp)
 
     df['team'] = df['constructor_name']
     return df[[
-        'year',
-        'constructor_id',
-        'constructor_name',
-        'team',
-        'position',
-        'points',
-        'race_wins',
-        'pole_positions',
-        'season_overall',
-        'competitiveness_rate',
-        'championship_score',
+        'year', 'constructor_id', 'constructor_name', 'team',
+        'position', 'points', 'race_wins', 'pole_positions',
+        'season_overall', 'competitiveness_score', 'championship_score',
+        'performance_score', 'engineering_score', 'competitiveness_rate',
     ]].rename(columns={'constructor_name': 'component_name'})
 
 
+# ---------------------------------------------------------------------------
+# Engine Manufacturer Ratings (formula.txt Section 4)
+# ---------------------------------------------------------------------------
+
 def build_engine_season_ratings(engine_df: pd.DataFrame, year_counts: pd.DataFrame) -> pd.DataFrame:
+    """Compute per-season engine manufacturer ratings.
+
+    ENGINE OVERALL = 0.30 × POWER_OUTPUT_PROXY
+                   + 0.25 × RELIABILITY_PROXY
+                   + 0.25 × COMPETITIVE_SPREAD
+                   + 0.20 × CHAMPIONSHIP_IMPACT
+    """
     df = engine_df.copy()
     df = map_year_metadata(df)
     df = df.merge(year_counts, on='year', how='left')
     df['n_constructors'] = df['n_constructors'].replace(0, 1)
-
     df['team_name'] = df['team_name'].fillna('Unknown')
-    grouped = df.groupby(['year', 'engine_manufacturer_name'], as_index=False)
 
-    engine_metrics = grouped.agg(
-        pole_rate_max=('pole_positions', lambda x: (x.fillna(0) / x.index.map(lambda _ : 1)).max()),
-        avg_harvest=('points', lambda pts: (pts.fillna(0) / df.loc[pts.index, 'max_constructor_points']).mean()),
-        team_count=('team_name', 'nunique'),
-        best_position=('position', 'min'),
-        teams=('team_name', lambda x: ', '.join(sorted(set(x.dropna())))),
-        year=('year', 'first'),
-    )
-
-    # Correct pole_rate_max computation using grouped row-wise values
-    engine_metrics = engine_metrics.drop(columns=['pole_rate_max'])
-    temp = []
-    for (year, engine), group in df.groupby(['year', 'engine_manufacturer_name']):
+    # Aggregate metrics per engine manufacturer per year
+    records = []
+    for (year, engine_name), group in df.groupby(['year', 'engine_manufacturer_name']):
+        # Power Output Proxy: best pole rate among all teams using this engine
         pole_rates = group['pole_positions'].fillna(0) / group['race_count']
+
+        # Reliability Proxy: average points harvest across all teams
         avg_harvest = (group['points'].fillna(0) / group['max_constructor_points']).mean()
+
+        # Competitive Spread: proportion of teams in top half of championship
         top_half = math.ceil(group['n_constructors'].iloc[0] / 2)
         competitive_ratio = (group['position'].le(top_half).sum() / len(group)) if len(group) > 0 else 0.0
+
+        # Championship Impact: best position among teams
         best_position = group['position'].min()
+
         teams = ', '.join(sorted(set(group['team_name'].dropna())))
-        temp.append({
+        records.append({
             'year': year,
-            'engine_manufacturer_name': engine,
+            'engine_manufacturer_name': engine_name,
             'pole_rate_max': pole_rates.max(),
             'avg_harvest': avg_harvest,
             'competitive_ratio': competitive_ratio,
@@ -222,16 +370,21 @@ def build_engine_season_ratings(engine_df: pd.DataFrame, year_counts: pd.DataFra
             'teams': teams,
             'n_constructors': group['n_constructors'].iloc[0],
         })
-    engine_metrics = pd.DataFrame(temp)
 
+    engine_metrics = pd.DataFrame(records)
+
+    # --- Apply Z-score → Φ → 0-100 → clamp ---
     engine_metrics['power_score'] = engine_metrics.groupby('year')['pole_rate_max'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
     engine_metrics['reliability_score'] = engine_metrics.groupby('year')['avg_harvest'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
     engine_metrics['spread_score'] = engine_metrics.groupby('year')['competitive_ratio'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
+
+    # Championship Impact: direct percentile, NO z-score
     engine_metrics['championship_score'] = engine_metrics.apply(
         lambda row: 100.0 if row['n_constructors'] <= 1 else clamp((1.0 - ((row['best_position'] - 1) / (row['n_constructors'] - 1))) * 100, 30, 99),
         axis=1,
     )
 
+    # --- Final weighted sum ---
     engine_metrics['season_overall'] = (
         0.30 * engine_metrics['power_score']
         + 0.25 * engine_metrics['reliability_score']
@@ -243,95 +396,103 @@ def build_engine_season_ratings(engine_df: pd.DataFrame, year_counts: pd.DataFra
     engine_metrics['team'] = engine_metrics['teams']
 
     return engine_metrics[[
-        'year',
-        'component_name',
-        'team',
-        'season_overall',
-        'power_score',
-        'reliability_score',
-        'spread_score',
-        'championship_score',
+        'year', 'component_name', 'team', 'season_overall',
+        'power_score', 'reliability_score', 'spread_score', 'championship_score',
     ]]
 
 
-def build_pitcrew_season_ratings(constructor_df: pd.DataFrame, year_counts: pd.DataFrame) -> pd.DataFrame:
-    df = constructor_df.copy()
-    df = map_year_metadata(df)
-    df = df.merge(year_counts, on='year', how='left')
-    df['n_constructors'] = df['n_constructors'].replace(0, 1)
+# ---------------------------------------------------------------------------
+# Team Principal / Chief Engineer / Car Designer Ratings (formula.txt Section 5)
+# ---------------------------------------------------------------------------
 
-    df['win_rate'] = df['race_wins'].fillna(0) / df['race_count']
-    df['points_harvest_rate'] = df['points'].fillna(0) / df['max_constructor_points']
-    df['pole_to_win_ratio'] = df.apply(
-        lambda row: row['race_wins'] / row['pole_positions'] if row['pole_positions'] > 0 else (1.5 if row['race_wins'] > 0 else row['points_harvest_rate']),
-        axis=1,
-    )
-    df['execution_rate'] = df['pole_to_win_ratio']
-    df['points_per_race'] = df['points'].fillna(0) / df['race_count']
-    df['balance_ratio'] = df.apply(
-        lambda row: 1.0 - abs(row['win_rate'] - row['points_harvest_rate']) if (row['points'] or 0) > 0 else 0.0,
-        axis=1,
-    )
-    df['max_points_year'] = df.groupby('year')['points'].transform('max').replace(0, 1)
-    df['champ_proximity'] = df['points'].fillna(0) / df['max_points_year']
+def build_team_leader_ratings(
+    personnel_df: pd.DataFrame,
+    constructor_ratings_df: pd.DataFrame,
+    year_counts: pd.DataFrame,
+    role: str,
+) -> pd.DataFrame:
+    """Compute per-season team leader ratings.
 
-    df['execution_score'] = df.groupby('year')['execution_rate'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
-    df['race_day_score'] = df.groupby('year')['points_per_race'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
-    df['strategic_score'] = df.groupby('year')['balance_ratio'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
-    df['operational_score'] = df.groupby('year')['champ_proximity'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
+    TP/ENGINEER OVERALL = 0.30 × RESULTS_DELIVERY
+                        + 0.25 × DEVELOPMENT_TRAJECTORY
+                        + 0.20 × RESOURCE_EFFICIENCY
+                        + 0.15 × OPERATIONAL_EXCELLENCE
+                        + 0.10 × LONGEVITY_STABILITY
 
-    df['season_overall'] = (
-        0.35 * df['execution_score']
-        + 0.30 * df['race_day_score']
-        + 0.20 * df['strategic_score']
-        + 0.15 * df['operational_score']
-    ).apply(clamp)
+    IMPORTANT: constructor_ratings_df must be the COMPUTED constructor ratings
+    (output of build_constructor_season_ratings), not the raw constructor_seasons
+    table, so that results_delivery and operational_excellence use the correct values.
+    """
+    # Prepare constructor data with computed ratings
+    constructors = constructor_ratings_df.copy()
+    # component_name was renamed from constructor_name, rename back to 'team' for merging
+    constructors = constructors.rename(columns={'component_name': 'team'})
 
-    return df.rename(columns={'constructor_name': 'team'})[[
-        'year',
-        'team',
-        'season_overall',
-        'execution_score',
-        'race_day_score',
-        'strategic_score',
-        'operational_score',
-    ]].assign(component_name=lambda d: d['team'])
-
-
-def build_team_leader_ratings(personnel_df: pd.DataFrame, constructor_df: pd.DataFrame, year_counts: pd.DataFrame, role: str) -> pd.DataFrame:
-    drivers = constructor_df.copy()
-    drivers = drivers.rename(columns={'constructor_name': 'team'})
-    drivers = map_year_metadata(drivers)
-    drivers = drivers.merge(year_counts, on='year', how='left')
-    drivers['n_constructors'] = drivers['n_constructors'].replace(0, 1)
-    drivers['champ_percentile'] = drivers.apply(
-        lambda row: 1.0 if row['n_constructors'] <= 1 else 1.0 - ((row['position'] - 1) / (row['n_constructors'] - 1)),
-        axis=1,
-    )
-    drivers['competitiveness_rate'] = drivers['points'].fillna(0) / drivers['max_constructor_points']
-    drivers['season_overall'] = drivers['season_overall'] if 'season_overall' in drivers.columns else drivers['points']
-
+    # Merge personnel with computed constructor data
     personnel = personnel_df.copy()
     personnel = personnel.merge(
-        drivers[['year', 'team', 'season_overall', 'champ_percentile', 'competitiveness_rate']],
+        constructors[['year', 'team', 'season_overall', 'competitiveness_score',
+                       'championship_score', 'competitiveness_rate']],
         on=['year', 'team'],
         how='left',
     )
+
+    # --- Sub-attribute 1: RESULTS_DELIVERY (0.30) ---
+    # Uses the COMPUTED constructor season overall, not raw data
     personnel['results_delivery'] = personnel['season_overall'].fillna(30)
 
+    # --- Sub-attribute 2: DEVELOPMENT_TRAJECTORY (0.25) ---
+    # Δ_percentile = champ_percentile(Y) - champ_percentile(Y-1)
+    # For first season under this leader: Δ = 0
+    # Score = (Δ + 1) / 2 × 100, clamped to [30, 99]
+    #
+    # We need champ_percentile from constructor data
+    constructors_for_percentile = constructor_ratings_df.copy()
+    constructors_for_percentile = constructors_for_percentile.rename(columns={'component_name': 'team'})
+    constructors_for_percentile = constructors_for_percentile.merge(year_counts, on='year', how='left')
+    constructors_for_percentile['n_constructors'] = constructors_for_percentile['n_constructors'].replace(0, 1)
+    constructors_for_percentile['champ_percentile'] = constructors_for_percentile.apply(
+        lambda row: 1.0 if row['n_constructors'] <= 1 else 1.0 - ((row['position'] - 1) / (row['n_constructors'] - 1)),
+        axis=1,
+    )
+
+    personnel = personnel.merge(
+        constructors_for_percentile[['year', 'team', 'champ_percentile']],
+        on=['year', 'team'],
+        how='left',
+    )
+    personnel['champ_percentile'] = personnel['champ_percentile'].fillna(0.0)
+
     personnel = personnel.sort_values(['name', 'team', 'year'])
-    personnel['previous_champ_percentile'] = personnel.groupby(['name', 'team'])['champ_percentile'].shift(1).fillna(personnel['champ_percentile'])
+    personnel['previous_champ_percentile'] = (
+        personnel.groupby(['name', 'team'])['champ_percentile']
+        .shift(1)
+        .fillna(personnel['champ_percentile'])
+    )
     personnel['development_delta'] = personnel['champ_percentile'] - personnel['previous_champ_percentile']
     personnel['development_delta'] = personnel['development_delta'].fillna(0.0)
     personnel['development_score'] = ((personnel['development_delta'] + 1.0) / 2.0 * 100).clip(30, 99)
 
-    historical_avg = personnel.groupby(['team'])['champ_percentile'].transform('mean')
-    personnel['overperformance'] = personnel['champ_percentile'].fillna(0.0) - historical_avg.fillna(0.0)
-    personnel['resource_score'] = personnel.groupby('year')['overperformance'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
-    personnel['operational_score'] = personnel['competitiveness_rate'].fillna(0).pipe(lambda s: s)
-    personnel['operational_score'] = personnel['operational_score'].groupby(personnel['year']).transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
+    # --- Sub-attribute 3: RESOURCE_EFFICIENCY (0.20) ---
+    # overperformance = champ_percentile - historical_avg(team)
+    # Then z-score across all leaders in that year → Φ → 0-100
+    historical_avg = personnel.groupby('team')['champ_percentile'].transform('mean')
+    personnel['overperformance'] = personnel['champ_percentile'] - historical_avg.fillna(0.0)
+    personnel['resource_score'] = (
+        personnel.groupby('year')['overperformance']
+        .transform(z_score)
+        .pipe(lambda s: normal_cdf(s) * 100)
+        .clip(30, 99)
+    )
 
-    personnel['streak'] = 0
+    # --- Sub-attribute 4: OPERATIONAL_EXCELLENCE (0.15) ---
+    # Uses the COMPUTED constructor competitiveness score directly
+    # (formula.txt line 677: OPERATIONAL_EXCELLENCE = COMPETITIVENESS(C, Y))
+    personnel['operational_score'] = personnel['competitiveness_score'].fillna(30).clip(30, 99)
+
+    # --- Sub-attribute 5: LONGEVITY_STABILITY (0.10) ---
+    # streak = consecutive seasons with champ_percentile >= 0.5
+    # longevity_raw = min(log2(streak+1) / log2(16), 1.0) × 100
     streaks = []
     for _, group in personnel.groupby(['name', 'team']):
         current_streak = 0
@@ -351,6 +512,7 @@ def build_team_leader_ratings(personnel_df: pd.DataFrame, constructor_df: pd.Dat
         lambda streak: min(math.log2(streak + 1) / math.log2(16), 1.0) * 100 if streak > 0 else 0.0
     ).clip(30, 99)
 
+    # --- Final weighted sum ---
     personnel['season_overall'] = (
         0.30 * personnel['results_delivery']
         + 0.25 * personnel['development_score']
@@ -360,19 +522,18 @@ def build_team_leader_ratings(personnel_df: pd.DataFrame, constructor_df: pd.Dat
     ).apply(clamp)
 
     return personnel.rename(columns={'name': 'component_name'})[[
-        'year',
-        'component_name',
-        'team',
-        'season_overall',
-        'results_delivery',
-        'development_score',
-        'resource_score',
-        'operational_score',
-        'longevity_score',
+        'year', 'component_name', 'team', 'season_overall',
+        'results_delivery', 'development_score', 'resource_score',
+        'operational_score', 'longevity_score',
     ]].assign(role=role)
 
 
+# ---------------------------------------------------------------------------
+# Database Output
+# ---------------------------------------------------------------------------
+
 def create_component_ratings_table():
+    """Create (or recreate) the component_ratings table with indexes."""
     with engine.connect() as conn:
         conn.execute(text('DROP TABLE IF EXISTS component_ratings CASCADE'))
         conn.execute(text(
@@ -387,13 +548,82 @@ def create_component_ratings_table():
             ' source TEXT NOT NULL'
             ')'
         ))
+        # Add indexes for the draft service query pattern (year + role)
+        conn.execute(text('CREATE INDEX idx_component_ratings_year_role ON component_ratings (year, role)'))
+        conn.execute(text('CREATE INDEX idx_component_ratings_component_name ON component_ratings (component_name)'))
         conn.commit()
 
 
-def save_component_ratings(df: pd.DataFrame):
+def create_career_ratings_table():
+    """Create (or recreate) the career_ratings table."""
     with engine.connect() as conn:
-        df.to_sql('component_ratings', conn, if_exists='append', index=False)
+        conn.execute(text('DROP TABLE IF EXISTS career_ratings CASCADE'))
+        conn.execute(text(
+            'CREATE TABLE career_ratings ('
+            ' role TEXT NOT NULL,'
+            ' component_name TEXT NOT NULL,'
+            ' career_overall FLOAT NOT NULL,'
+            ' seasons_count INT NOT NULL,'
+            ' peak_season_overall FLOAT NOT NULL,'
+            ' latest_year INT NOT NULL'
+            ')'
+        ))
+        conn.execute(text('CREATE INDEX idx_career_ratings_role ON career_ratings (role)'))
+        conn.execute(text('CREATE INDEX idx_career_ratings_name ON career_ratings (component_name)'))
+        conn.commit()
 
+
+def save_to_table(df: pd.DataFrame, table_name: str):
+    """Append a DataFrame to the specified table."""
+    with engine.connect() as conn:
+        df.to_sql(table_name, conn, if_exists='append', index=False)
+
+
+# ---------------------------------------------------------------------------
+# Sanity Checks (formula.txt sanity check examples)
+# ---------------------------------------------------------------------------
+
+def run_sanity_checks(component_ratings: pd.DataFrame):
+    """Print sanity check outputs for known benchmark entities."""
+    checks = [
+        # (role, name, year_range, expected_min, expected_max)
+        ('driver', 'Michael Schumacher', (2001, 2004), 96, 98),
+        ('driver', 'Lewis Hamilton', (2017, 2020), 96, 98),
+        ('driver', 'Max Verstappen', (2023, 2023), 97, 99),
+        ('chassis', 'Ferrari', (2000, 2004), 94, 97),
+        ('chassis', 'Mercedes', (2014, 2020), 95, 98),
+        ('chassis', 'Red Bull', (2010, 2013), 93, 96),
+    ]
+
+    print('\n--- SANITY CHECKS ---')
+    all_passed = True
+    for role, name, (y_start, y_end), exp_min, exp_max in checks:
+        mask = (
+            (component_ratings['role'] == role)
+            & (component_ratings['component_name'].str.contains(name, case=False, na=False))
+            & (component_ratings['year'] >= y_start)
+            & (component_ratings['year'] <= y_end)
+        )
+        subset = component_ratings[mask]
+        if subset.empty:
+            print(f'  ⚠ {name} ({role}, {y_start}-{y_end}): NOT FOUND in data')
+            continue
+
+        avg_rating = subset['rating'].mean()
+        status = '✅' if exp_min <= avg_rating <= exp_max else '⚠️'
+        if status == '⚠️':
+            all_passed = False
+        print(f'  {status} {name} ({role}, {y_start}-{y_end}): avg={avg_rating:.1f}  (expected {exp_min}-{exp_max})')
+
+    if all_passed:
+        print('  All sanity checks passed.\n')
+    else:
+        print('  Some sanity checks outside expected range — review formula weights.\n')
+
+
+# ---------------------------------------------------------------------------
+# Main Pipeline
+# ---------------------------------------------------------------------------
 
 def main():
     print('Loading tables from database...')
@@ -406,90 +636,136 @@ def main():
 
     year_counts = load_year_counts()
 
+    # ------------------------------------------------------------------
+    # 1. DRIVER SEASON RATINGS
+    # ------------------------------------------------------------------
     print('Building driver season ratings...')
     driver_ratings = build_driver_season_ratings(driver_df, year_counts)
     driver_ratings = driver_ratings.assign(
         role='driver',
-        raw_score=lambda d: d['season_overall'],
-        normalized_score=lambda d: d['season_overall'],
+        raw_score=lambda d: d['dominance_score'],
+        normalized_score=lambda d: d['race_craft_score'],
         rating=lambda d: d['season_overall'],
         source='driver_seasons',
     )
 
+    # ------------------------------------------------------------------
+    # 2. CONSTRUCTOR (CHASSIS) SEASON RATINGS
+    # ------------------------------------------------------------------
     print('Building constructor season ratings...')
     constructor_ratings = build_constructor_season_ratings(constructor_df, year_counts)
     constructor_ratings = constructor_ratings.assign(
         role='chassis',
-        raw_score=lambda d: d['season_overall'],
-        normalized_score=lambda d: d['season_overall'],
+        raw_score=lambda d: d['performance_score'],
+        normalized_score=lambda d: d['competitiveness_score'],
         rating=lambda d: d['season_overall'],
         source='constructor_seasons',
     )
 
+    # ------------------------------------------------------------------
+    # 3. ENGINE SEASON RATINGS
+    # ------------------------------------------------------------------
     print('Building engine season ratings...')
     engine_ratings = build_engine_season_ratings(constructor_engine_df, year_counts)
     engine_ratings = engine_ratings.assign(
         role='engine',
-        raw_score=lambda d: d['season_overall'],
-        normalized_score=lambda d: d['season_overall'],
+        raw_score=lambda d: d['power_score'],
+        normalized_score=lambda d: d['reliability_score'],
         rating=lambda d: d['season_overall'],
         source='constructor_seasons_with_engines',
     )
 
-    print('Building pit crew ratings...')
-    pitcrew_ratings = build_pitcrew_season_ratings(constructor_df, year_counts)
-    pitcrew_ratings = pitcrew_ratings.assign(
-        role='pit_crew',
-        raw_score=lambda d: d['season_overall'],
-        normalized_score=lambda d: d['season_overall'],
-        rating=lambda d: d['season_overall'],
-        source='constructor_seasons',
-    )
-
+    # ------------------------------------------------------------------
+    # 4. TEAM PRINCIPAL SEASON RATINGS
+    #    (uses COMPUTED constructor_ratings, not raw constructor_df)
+    # ------------------------------------------------------------------
     print('Building team principal ratings...')
-    tp_ratings = build_team_leader_ratings(team_principals_df, constructor_df, year_counts, 'team_principal')
+    tp_ratings = build_team_leader_ratings(team_principals_df, constructor_ratings, year_counts, 'team_principal')
     tp_ratings = tp_ratings.assign(
-        raw_score=lambda d: d['season_overall'],
-        normalized_score=lambda d: d['season_overall'],
+        raw_score=lambda d: d['results_delivery'],
+        normalized_score=lambda d: d['development_score'],
         rating=lambda d: d['season_overall'],
         source='team_principals',
     )
 
+    # ------------------------------------------------------------------
+    # 5. CHIEF ENGINEER SEASON RATINGS
+    # ------------------------------------------------------------------
     print('Building chief engineer ratings...')
-    engineer_ratings = build_team_leader_ratings(team_engineers_df, constructor_df, year_counts, 'chief_engineer')
+    engineer_ratings = build_team_leader_ratings(team_engineers_df, constructor_ratings, year_counts, 'chief_engineer')
     engineer_ratings = engineer_ratings.assign(
-        raw_score=lambda d: d['season_overall'],
-        normalized_score=lambda d: d['season_overall'],
+        raw_score=lambda d: d['results_delivery'],
+        normalized_score=lambda d: d['development_score'],
         rating=lambda d: d['season_overall'],
         source='team_engineers',
     )
 
+    # ------------------------------------------------------------------
+    # 6. CAR DESIGNER SEASON RATINGS
+    # ------------------------------------------------------------------
     print('Building car designer ratings...')
-    car_designer_ratings = build_team_leader_ratings(car_designers_df, constructor_df, year_counts, 'car_designer')
+    car_designer_ratings = build_team_leader_ratings(car_designers_df, constructor_ratings, year_counts, 'car_designer')
     car_designer_ratings = car_designer_ratings.assign(
-        raw_score=lambda d: d['season_overall'],
-        normalized_score=lambda d: d['season_overall'],
+        raw_score=lambda d: d['results_delivery'],
+        normalized_score=lambda d: d['development_score'],
         rating=lambda d: d['season_overall'],
         source='car_designers',
     )
 
-    print('Assembling component_ratings...')
-    output_frames = [
-        driver_ratings[['year', 'role', 'component_name', 'team', 'raw_score', 'normalized_score', 'rating', 'source']],
-        constructor_ratings[['year', 'role', 'component_name', 'team', 'raw_score', 'normalized_score', 'rating', 'source']],
-        engine_ratings[['year', 'role', 'component_name', 'team', 'raw_score', 'normalized_score', 'rating', 'source']],
-        pitcrew_ratings[['year', 'role', 'component_name', 'team', 'raw_score', 'normalized_score', 'rating', 'source']],
-        tp_ratings[['year', 'role', 'component_name', 'team', 'raw_score', 'normalized_score', 'rating', 'source']],
-        engineer_ratings[['year', 'role', 'component_name', 'team', 'raw_score', 'normalized_score', 'rating', 'source']],
-        car_designer_ratings[['year', 'role', 'component_name', 'team', 'raw_score', 'normalized_score', 'rating', 'source']],
-    ]
-    component_ratings = pd.concat(output_frames, ignore_index=True)
+    # ------------------------------------------------------------------
+    # Assemble all season ratings into component_ratings
+    # ------------------------------------------------------------------
+    output_columns = ['year', 'role', 'component_name', 'team', 'raw_score', 'normalized_score', 'rating', 'source']
 
+    print('Assembling component_ratings...')
+    component_ratings = pd.concat([
+        driver_ratings[output_columns],
+        constructor_ratings[output_columns],
+        engine_ratings[output_columns],
+        tp_ratings[output_columns],
+        engineer_ratings[output_columns],
+        car_designer_ratings[output_columns],
+    ], ignore_index=True)
+
+    # ------------------------------------------------------------------
+    # Write season ratings to database
+    # ------------------------------------------------------------------
     print('Creating component_ratings table...')
     create_component_ratings_table()
     print(f'Writing {len(component_ratings)} rows to component_ratings...')
-    save_component_ratings(component_ratings)
-    print('Done. component_ratings table is ready.')
+    save_to_table(component_ratings, 'component_ratings')
+
+    # ------------------------------------------------------------------
+    # Compute and write career ratings
+    # ------------------------------------------------------------------
+    print('Computing career aggregations...')
+    career_frames = []
+
+    for role, ratings_df in [
+        ('driver', driver_ratings),
+        ('chassis', constructor_ratings),
+        ('engine', engine_ratings),
+        ('team_principal', tp_ratings),
+        ('chief_engineer', engineer_ratings),
+        ('car_designer', car_designer_ratings),
+    ]:
+        career = compute_career_overall(ratings_df, 'component_name')
+        career['role'] = role
+        career_frames.append(career)
+
+    career_ratings = pd.concat(career_frames, ignore_index=True)
+
+    print('Creating career_ratings table...')
+    create_career_ratings_table()
+    print(f'Writing {len(career_ratings)} rows to career_ratings...')
+    save_to_table(career_ratings, 'career_ratings')
+
+    # ------------------------------------------------------------------
+    # Sanity checks
+    # ------------------------------------------------------------------
+    run_sanity_checks(component_ratings)
+
+    print('Done. component_ratings and career_ratings tables are ready.')
 
 
 if __name__ == '__main__':
