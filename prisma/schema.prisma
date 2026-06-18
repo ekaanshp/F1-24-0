@@ -111,6 +111,9 @@ model LeaderboardEntry {
 
 /// Per-season driver statistics fetched from the RacingHub API.
 /// Source: services/data-pipeline/fetch_data.py
+///
+/// Computed columns (nullable) are populated via SQL or scripts before
+/// running compute_ratings.py. See formula.txt Section 2 for details.
 model driver_seasons {
   id             Int     @id @default(autoincrement())
   driver_id      String?
@@ -122,12 +125,39 @@ model driver_seasons {
   pole_positions BigInt?
   constructors   String?
 
+  // --- Era metadata (formula.txt Section 7A/7B) ---
+  race_count          Int?   // R(Y): number of races in this season
+  max_win_points      Int?   // Max points awarded for a race win in this era
+  max_points_available Float? // max_win_points × race_count
+  n_drivers           Int?   // N(Y): count of distinct drivers in this season's championship
+
+  // --- Sub-attribute 1: DOMINANCE (weight 0.30) ---
+  win_rate       Float? // race_wins / race_count
+  points_rate    Float? // points / max_points_available
+  dominance_rate Float? // sqrt(win_rate × points_rate) — geometric mean
+
+  // --- Sub-attribute 2: RACE_CRAFT (weight 0.25) ---
+  normalized_position Float? // 1 - ((position - 1) / (n_drivers - 1))
+  pawe                Float? // 0.6 × win_rate + 0.4 × normalized_position
+
+  // --- Sub-attribute 3: QUALIFYING_PROWESS (weight 0.20) ---
+  pole_rate Float? // pole_positions / race_count
+
+  // --- Sub-attribute 4: CONSISTENCY (weight 0.15) ---
+  points_harvest_rate Float? // points / max_points_available
+  consistency_raw     Float? // points_harvest_rate / max(points_harvest_rate in year)
+
+  // --- Sub-attribute 5: CHAMPIONSHIP_PEDIGREE (weight 0.10) ---
+  champ_percentile Float? // 1 - ((position - 1) / (n_drivers - 1)), scaled 0-1
+
   @@index([driver_id], map: "idx_driver_seasons_driver_id")
   @@index([year], map: "idx_driver_seasons_year")
 }
 
 /// Per-season constructor standings fetched from the RacingHub API.
 /// Source: services/data-pipeline/fetch_data.py
+///
+/// Computed columns (nullable) — see formula.txt Section 3.
 model constructor_seasons {
   id               Int     @id @default(autoincrement())
   constructor_id   String?
@@ -138,12 +168,34 @@ model constructor_seasons {
   race_wins        BigInt?
   pole_positions   BigInt?
 
+  // --- Era metadata ---
+  race_count            Int?   // R(Y)
+  max_win_points        Int?   // Max points for a win in this era
+  second_place_points   Int?   // Points for 2nd place in this era
+  max_constructor_points Float? // (max_win_points + second_place_points) × race_count
+  n_constructors        Int?   // T(Y): count of distinct constructors in this season
+
+  // --- Sub-attribute 1: PERFORMANCE (weight 0.30) ---
+  win_rate Float? // race_wins / race_count
+
+  // --- Sub-attribute 2: COMPETITIVENESS (weight 0.30) ---
+  competitiveness_rate Float? // points / max_constructor_points
+
+  // --- Sub-attribute 3: ENGINEERING_EXCELLENCE (weight 0.25) ---
+  pole_rate Float? // pole_positions / race_count
+
+  // --- Sub-attribute 4: CHAMPIONSHIP_STANDING (weight 0.15) ---
+  champ_percentile Float? // 1 - ((position - 1) / (n_constructors - 1))
+
   @@index([constructor_id], map: "idx_constructor_seasons_constructor_id")
   @@index([year], map: "idx_constructor_seasons_year")
 }
 
 /// Per-season constructor data joined with engine manufacturer info.
 /// Source: services/data-pipeline/fetch_constructor_data_with_engine.py
+///
+/// Computed columns (nullable) — see formula.txt Section 4.
+/// These per-team-row values feed into engine manufacturer aggregation.
 model constructor_seasons_with_engines {
   id                       Int     @id @default(autoincrement())
   year                     BigInt?
@@ -153,6 +205,17 @@ model constructor_seasons_with_engines {
   points                   Float?
   race_wins                BigInt?
   pole_positions           BigInt?
+
+  // --- Era metadata ---
+  race_count            Int?   // R(Y)
+  max_win_points        Int?   // Max points for a win in this era
+  second_place_points   Int?   // Points for 2nd place in this era
+  max_constructor_points Float? // (max_win_points + second_place_points) × race_count
+  n_constructors        Int?   // T(Y): count of distinct constructors in this season
+
+  // --- Per-team rate metrics (used in engine aggregation) ---
+  pole_rate              Float? // pole_positions / race_count
+  points_harvest_rate    Float? // points / max_constructor_points
 
   @@index([engine_manufacturer_name], map: "idx_cswe_engine")
   @@index([year], map: "idx_cswe_year")
@@ -164,30 +227,99 @@ model constructor_seasons_with_engines {
 
 /// Car designers mapped to teams per season.
 /// Source: services/data-pipeline/upload_personnel.py + car_designers.csv
+///
+/// Computed columns (nullable) — see formula.txt Section 5.
+/// 'team' must EXACTLY match constructor_name in constructor_seasons
+/// for the merge to work. Use constructor_match to verify alignment.
 model car_designers {
   id   Int    @id @default(autoincrement())
   year Int
   name String
   team String
+
+  // --- Name alignment ---
+  constructor_match String? // Resolved constructor_name from constructor_seasons (for validation)
+
+  // --- Inputs from constructor ratings (joined on year+team) ---
+  constructor_season_overall Float? // The constructor's computed season overall → RESULTS_DELIVERY
+  competitiveness_score      Float? // Constructor's competitiveness score → OPERATIONAL_EXCELLENCE
+  champ_percentile           Float? // 1 - ((position-1)/(n_constructors-1)) from constructor data
+
+  // --- Sub-attribute 2: DEVELOPMENT_TRAJECTORY (weight 0.25) ---
+  prev_champ_percentile Float? // champ_percentile from the previous season under this leader
+  development_delta     Float? // champ_percentile - prev_champ_percentile
+
+  // --- Sub-attribute 3: RESOURCE_EFFICIENCY (weight 0.20) ---
+  historical_avg_percentile Float? // Mean champ_percentile for this team across ALL seasons
+  overperformance           Float? // champ_percentile - historical_avg_percentile
+
+  // --- Sub-attribute 5: LONGEVITY_STABILITY (weight 0.10) ---
+  streak Int? // Consecutive seasons with champ_percentile >= 0.5 under this leader
 }
 
 /// Team principals mapped to teams per season.
 /// Source: services/data-pipeline/upload_personnel.py + team_principals.csv
+///
+/// Computed columns (nullable) — see formula.txt Section 5.
+/// 'team' must EXACTLY match constructor_name in constructor_seasons
+/// for the merge to work. Use constructor_match to verify alignment.
 model team_principals {
   id   Int    @id @default(autoincrement())
   year Int
   name String
   team String
+
+  // --- Name alignment ---
+  constructor_match String? // Resolved constructor_name from constructor_seasons (for validation)
+
+  // --- Inputs from constructor ratings (joined on year+team) ---
+  constructor_season_overall Float? // The constructor's computed season overall → RESULTS_DELIVERY
+  competitiveness_score      Float? // Constructor's competitiveness score → OPERATIONAL_EXCELLENCE
+  champ_percentile           Float? // 1 - ((position-1)/(n_constructors-1)) from constructor data
+
+  // --- Sub-attribute 2: DEVELOPMENT_TRAJECTORY (weight 0.25) ---
+  prev_champ_percentile Float? // champ_percentile from the previous season under this leader
+  development_delta     Float? // champ_percentile - prev_champ_percentile
+
+  // --- Sub-attribute 3: RESOURCE_EFFICIENCY (weight 0.20) ---
+  historical_avg_percentile Float? // Mean champ_percentile for this team across ALL seasons
+  overperformance           Float? // champ_percentile - historical_avg_percentile
+
+  // --- Sub-attribute 5: LONGEVITY_STABILITY (weight 0.10) ---
+  streak Int? // Consecutive seasons with champ_percentile >= 0.5 under this leader
 }
 
 /// Chief/race engineers mapped to teams and drivers per season.
 /// Source: services/data-pipeline/upload_personnel.py + team_engineers.csv
+///
+/// Computed columns (nullable) — see formula.txt Section 5.
+/// 'team' must EXACTLY match constructor_name in constructor_seasons
+/// for the merge to work. Use constructor_match to verify alignment.
 model team_engineers {
   id     Int     @id @default(autoincrement())
   year   Int
   name   String
   team   String
   driver String?
+
+  // --- Name alignment ---
+  constructor_match String? // Resolved constructor_name from constructor_seasons (for validation)
+
+  // --- Inputs from constructor ratings (joined on year+team) ---
+  constructor_season_overall Float? // The constructor's computed season overall → RESULTS_DELIVERY
+  competitiveness_score      Float? // Constructor's competitiveness score → OPERATIONAL_EXCELLENCE
+  champ_percentile           Float? // 1 - ((position-1)/(n_constructors-1)) from constructor data
+
+  // --- Sub-attribute 2: DEVELOPMENT_TRAJECTORY (weight 0.25) ---
+  prev_champ_percentile Float? // champ_percentile from the previous season under this leader
+  development_delta     Float? // champ_percentile - prev_champ_percentile
+
+  // --- Sub-attribute 3: RESOURCE_EFFICIENCY (weight 0.20) ---
+  historical_avg_percentile Float? // Mean champ_percentile for this team across ALL seasons
+  overperformance           Float? // champ_percentile - historical_avg_percentile
+
+  // --- Sub-attribute 5: LONGEVITY_STABILITY (weight 0.10) ---
+  streak Int? // Consecutive seasons with champ_percentile >= 0.5 under this leader
 }
 
 // =============================================================================
@@ -227,4 +359,20 @@ model career_ratings {
 
   @@index([role], map: "idx_career_ratings_role")
   @@index([component_name], map: "idx_career_ratings_name")
+}
+
+/// Decade-aggregated ratings for components.
+/// Source: services/data-pipeline/compute_ratings.py
+model decade_ratings {
+  id                  Int    @id @default(autoincrement())
+  role                String // driver | chassis | engine | team_principal | chief_engineer | car_designer
+  component_name      String
+  decade              String // e.g. "1980s", "1990s", "2000s", "2010s", "2020s"
+  rating              Float
+  seasons_count       Int
+  peak_season_overall Float
+  latest_year         Int
+
+  @@index([role, decade], map: "idx_decade_ratings_role_decade")
+  @@index([component_name], map: "idx_decade_ratings_name")
 }

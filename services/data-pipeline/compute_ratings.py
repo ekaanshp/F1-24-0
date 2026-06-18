@@ -115,6 +115,21 @@ def second_place_points(year: int) -> int:
     return 18
 
 
+def write_back_source_table(df: pd.DataFrame, table_name: str, columns: list[str]):
+    """Truncate a source table and write back enriched data, preserving schema.
+
+    Uses TRUNCATE ... RESTART IDENTITY to clear rows while keeping the
+    table structure (indexes, constraints, sequences) intact, then appends
+    the enriched DataFrame.
+    """
+    write_df = df[columns].copy()
+    with engine.connect() as conn:
+        conn.execute(text(f'TRUNCATE TABLE {table_name} RESTART IDENTITY'))
+        conn.commit()
+    write_df.to_sql(table_name, engine, if_exists='append', index=False)
+    print(f'  \u2713 Wrote {len(write_df)} enriched rows back to {table_name}')
+
+
 # ---------------------------------------------------------------------------
 # Data Loading
 # ---------------------------------------------------------------------------
@@ -198,6 +213,29 @@ def compute_career_overall(season_df: pd.DataFrame, entity_col: str) -> pd.DataF
     return pd.DataFrame(results)
 
 
+def compute_decade_overall(season_df: pd.DataFrame, entity_col: str) -> pd.DataFrame:
+    """Compute decade-by-decade ratings.
+
+    For each entity and decade, the rating is the average of season overalls
+    during that decade.
+    """
+    df = season_df.copy()
+    df['decade'] = (df['year'] // 10 * 10).astype(int).astype(str) + 's'
+
+    results = []
+    for (entity_name, decade), group in df.groupby([entity_col, 'decade']):
+        results.append({
+            entity_col: entity_name,
+            'decade': decade,
+            'rating': clamp(group['season_overall'].mean()),
+            'seasons_count': len(group),
+            'peak_season_overall': group['season_overall'].max(),
+            'latest_year': int(group['year'].max()),
+        })
+
+    return pd.DataFrame(results)
+
+
 # ---------------------------------------------------------------------------
 # Driver Ratings (formula.txt Section 2)
 # ---------------------------------------------------------------------------
@@ -211,7 +249,8 @@ def build_driver_season_ratings(driver_df: pd.DataFrame, year_counts: pd.DataFra
                    + 0.15 × CONSISTENCY
                    + 0.10 × CHAMPIONSHIP_PEDIGREE
     """
-    df = driver_df.copy()
+    df = driver_df[['driver_id', 'driver_name', 'year', 'position', 'points',
+                     'race_wins', 'pole_positions', 'constructors']].copy()
     df = map_year_metadata(df)
     df = df.merge(year_counts, on='year', how='left')
     df['n_drivers'] = df['n_drivers'].replace(0, 1)
@@ -261,7 +300,10 @@ def build_driver_season_ratings(driver_df: pd.DataFrame, year_counts: pd.DataFra
         + 0.10 * df['championship_score']
     ).apply(clamp)
 
-    return df[['year', 'driver_id', 'driver_name', 'constructors', 'season_overall',
+    # Rename for schema compatibility
+    df = df.rename(columns={'PAWE': 'pawe'})
+
+    ratings_df = df[['year', 'driver_id', 'driver_name', 'constructors', 'season_overall',
                'dominance_score', 'race_craft_score', 'qualifying_score',
                'consistency_score', 'championship_score']].rename(
         columns={
@@ -269,6 +311,8 @@ def build_driver_season_ratings(driver_df: pd.DataFrame, year_counts: pd.DataFra
             'constructors': 'team',
         }
     )
+
+    return ratings_df, df
 
 
 # ---------------------------------------------------------------------------
@@ -283,10 +327,12 @@ def build_constructor_season_ratings(constructor_df: pd.DataFrame, year_counts: 
                         + 0.25 × ENGINEERING_EXCELLENCE
                         + 0.15 × CHAMPIONSHIP_STANDING
     """
-    df = constructor_df.copy()
+    df = constructor_df[['constructor_id', 'constructor_name', 'year', 'position', 'points',
+                          'race_wins', 'pole_positions']].copy()
     df = map_year_metadata(df)
     df = df.merge(year_counts, on='year', how='left')
     df['n_constructors'] = df['n_constructors'].replace(0, 1)
+    df['second_place_points'] = df['year'].map(second_place_points)
 
     # --- Sub-attribute 1: PERFORMANCE (0.30) ---
     df['win_rate'] = df['race_wins'].fillna(0) / df['race_count']
@@ -302,11 +348,11 @@ def build_constructor_season_ratings(constructor_df: pd.DataFrame, year_counts: 
 
     # --- Sub-attribute 4: CHAMPIONSHIP_STANDING (0.15) ---
     # Direct percentile mapping, NO z-score
-    df['championship_score'] = df.apply(
+    df['champ_percentile'] = df.apply(
         lambda row: 1.0 if row['n_constructors'] <= 1 else 1.0 - ((row['position'] - 1) / (row['n_constructors'] - 1)),
         axis=1,
-    ) * 100
-    df['championship_score'] = df['championship_score'].clip(30, 99)
+    )
+    df['championship_score'] = (df['champ_percentile'] * 100).clip(30, 99)
 
     # --- Final weighted sum ---
     df['season_overall'] = (
@@ -317,12 +363,15 @@ def build_constructor_season_ratings(constructor_df: pd.DataFrame, year_counts: 
     ).apply(clamp)
 
     df['team'] = df['constructor_name']
-    return df[[
+
+    ratings_df = df[[
         'year', 'constructor_id', 'constructor_name', 'team',
         'position', 'points', 'race_wins', 'pole_positions',
         'season_overall', 'competitiveness_score', 'championship_score',
         'performance_score', 'engineering_score', 'competitiveness_rate',
     ]].rename(columns={'constructor_name': 'component_name'})
+
+    return ratings_df, df
 
 
 # ---------------------------------------------------------------------------
@@ -337,11 +386,17 @@ def build_engine_season_ratings(engine_df: pd.DataFrame, year_counts: pd.DataFra
                    + 0.25 × COMPETITIVE_SPREAD
                    + 0.20 × CHAMPIONSHIP_IMPACT
     """
-    df = engine_df.copy()
+    df = engine_df[['year', 'team_name', 'engine_manufacturer_name', 'position', 'points',
+                     'race_wins', 'pole_positions']].copy()
     df = map_year_metadata(df)
     df = df.merge(year_counts, on='year', how='left')
     df['n_constructors'] = df['n_constructors'].replace(0, 1)
     df['team_name'] = df['team_name'].fillna('Unknown')
+
+    # Pre-compute per-team rate metrics for write-back to source table
+    df['pole_rate'] = df['pole_positions'].fillna(0) / df['race_count']
+    df['points_harvest_rate'] = df['points'].fillna(0) / df['max_constructor_points']
+    df['second_place_points'] = df['year'].map(second_place_points)
 
     # Aggregate metrics per engine manufacturer per year
     records = []
@@ -395,10 +450,12 @@ def build_engine_season_ratings(engine_df: pd.DataFrame, year_counts: pd.DataFra
     engine_metrics['component_name'] = engine_metrics['engine_manufacturer_name']
     engine_metrics['team'] = engine_metrics['teams']
 
-    return engine_metrics[[
+    ratings_df = engine_metrics[[
         'year', 'component_name', 'team', 'season_overall',
         'power_score', 'reliability_score', 'spread_score', 'championship_score',
     ]]
+
+    return ratings_df, df
 
 
 # ---------------------------------------------------------------------------
@@ -426,10 +483,15 @@ def build_team_leader_ratings(
     # Prepare constructor data with computed ratings
     constructors = constructor_ratings_df.copy()
     # component_name was renamed from constructor_name, rename back to 'team' for merging
+    if 'team' in constructors.columns:
+        constructors = constructors.drop(columns=['team'])
     constructors = constructors.rename(columns={'component_name': 'team'})
 
     # Merge personnel with computed constructor data
-    personnel = personnel_df.copy()
+    base_cols = ['year', 'name', 'team']
+    if 'driver' in personnel_df.columns:
+        base_cols.append('driver')
+    personnel = personnel_df[base_cols].copy()
     personnel = personnel.merge(
         constructors[['year', 'team', 'season_overall', 'competitiveness_score',
                        'championship_score', 'competitiveness_rate']],
@@ -439,6 +501,7 @@ def build_team_leader_ratings(
 
     # --- Sub-attribute 1: RESULTS_DELIVERY (0.30) ---
     # Uses the COMPUTED constructor season overall, not raw data
+    personnel['constructor_season_overall'] = personnel['season_overall']
     personnel['results_delivery'] = personnel['season_overall'].fillna(30)
 
     # --- Sub-attribute 2: DEVELOPMENT_TRAJECTORY (0.25) ---
@@ -448,6 +511,8 @@ def build_team_leader_ratings(
     #
     # We need champ_percentile from constructor data
     constructors_for_percentile = constructor_ratings_df.copy()
+    if 'team' in constructors_for_percentile.columns:
+        constructors_for_percentile = constructors_for_percentile.drop(columns=['team'])
     constructors_for_percentile = constructors_for_percentile.rename(columns={'component_name': 'team'})
     constructors_for_percentile = constructors_for_percentile.merge(year_counts, on='year', how='left')
     constructors_for_percentile['n_constructors'] = constructors_for_percentile['n_constructors'].replace(0, 1)
@@ -476,8 +541,8 @@ def build_team_leader_ratings(
     # --- Sub-attribute 3: RESOURCE_EFFICIENCY (0.20) ---
     # overperformance = champ_percentile - historical_avg(team)
     # Then z-score across all leaders in that year → Φ → 0-100
-    historical_avg = personnel.groupby('team')['champ_percentile'].transform('mean')
-    personnel['overperformance'] = personnel['champ_percentile'] - historical_avg.fillna(0.0)
+    personnel['historical_avg_percentile'] = personnel.groupby('team')['champ_percentile'].transform('mean')
+    personnel['overperformance'] = personnel['champ_percentile'] - personnel['historical_avg_percentile'].fillna(0.0)
     personnel['resource_score'] = (
         personnel.groupby('year')['overperformance']
         .transform(z_score)
@@ -521,11 +586,20 @@ def build_team_leader_ratings(
         + 0.10 * personnel['longevity_score']
     ).apply(clamp)
 
-    return personnel.rename(columns={'name': 'component_name'})[[
+    # Prepare enriched columns for write-back to source table
+    personnel['constructor_match'] = personnel.apply(
+        lambda row: row['team'] if pd.notna(row.get('constructor_season_overall')) else None,
+        axis=1,
+    )
+    personnel['prev_champ_percentile'] = personnel['previous_champ_percentile']
+
+    ratings_df = personnel.rename(columns={'name': 'component_name'})[[
         'year', 'component_name', 'team', 'season_overall',
         'results_delivery', 'development_score', 'resource_score',
         'operational_score', 'longevity_score',
     ]].assign(role=role)
+
+    return ratings_df, personnel
 
 
 # ---------------------------------------------------------------------------
@@ -573,6 +647,26 @@ def create_career_ratings_table():
         conn.commit()
 
 
+def create_decade_ratings_table():
+    """Create (or recreate) the decade_ratings table."""
+    with engine.connect() as conn:
+        conn.execute(text('DROP TABLE IF EXISTS decade_ratings CASCADE'))
+        conn.execute(text(
+            'CREATE TABLE decade_ratings ('
+            ' role TEXT NOT NULL,'
+            ' component_name TEXT NOT NULL,'
+            ' decade TEXT NOT NULL,'
+            ' rating FLOAT NOT NULL,'
+            ' seasons_count INT NOT NULL,'
+            ' peak_season_overall FLOAT NOT NULL,'
+            ' latest_year INT NOT NULL'
+            ')'
+        ))
+        conn.execute(text('CREATE INDEX idx_decade_ratings_role_decade ON decade_ratings (role, decade)'))
+        conn.execute(text('CREATE INDEX idx_decade_ratings_name ON decade_ratings (component_name)'))
+        conn.commit()
+
+
 def save_to_table(df: pd.DataFrame, table_name: str):
     """Append a DataFrame to the specified table."""
     with engine.connect() as conn:
@@ -598,9 +692,13 @@ def run_sanity_checks(component_ratings: pd.DataFrame):
     print('\n--- SANITY CHECKS ---')
     all_passed = True
     for role, name, (y_start, y_end), exp_min, exp_max in checks:
+        # Match all parts of the query name (handles middle names)
+        name_mask = component_ratings['component_name'].apply(
+            lambda x: all(part.lower() in str(x).lower() for part in name.split())
+        )
         mask = (
             (component_ratings['role'] == role)
-            & (component_ratings['component_name'].str.contains(name, case=False, na=False))
+            & name_mask
             & (component_ratings['year'] >= y_start)
             & (component_ratings['year'] <= y_end)
         )
@@ -640,7 +738,7 @@ def main():
     # 1. DRIVER SEASON RATINGS
     # ------------------------------------------------------------------
     print('Building driver season ratings...')
-    driver_ratings = build_driver_season_ratings(driver_df, year_counts)
+    driver_ratings, driver_enriched = build_driver_season_ratings(driver_df, year_counts)
     driver_ratings = driver_ratings.assign(
         role='driver',
         raw_score=lambda d: d['dominance_score'],
@@ -653,7 +751,7 @@ def main():
     # 2. CONSTRUCTOR (CHASSIS) SEASON RATINGS
     # ------------------------------------------------------------------
     print('Building constructor season ratings...')
-    constructor_ratings = build_constructor_season_ratings(constructor_df, year_counts)
+    constructor_ratings, constructor_enriched = build_constructor_season_ratings(constructor_df, year_counts)
     constructor_ratings = constructor_ratings.assign(
         role='chassis',
         raw_score=lambda d: d['performance_score'],
@@ -666,7 +764,7 @@ def main():
     # 3. ENGINE SEASON RATINGS
     # ------------------------------------------------------------------
     print('Building engine season ratings...')
-    engine_ratings = build_engine_season_ratings(constructor_engine_df, year_counts)
+    engine_ratings, engine_enriched = build_engine_season_ratings(constructor_engine_df, year_counts)
     engine_ratings = engine_ratings.assign(
         role='engine',
         raw_score=lambda d: d['power_score'],
@@ -680,7 +778,7 @@ def main():
     #    (uses COMPUTED constructor_ratings, not raw constructor_df)
     # ------------------------------------------------------------------
     print('Building team principal ratings...')
-    tp_ratings = build_team_leader_ratings(team_principals_df, constructor_ratings, year_counts, 'team_principal')
+    tp_ratings, tp_enriched = build_team_leader_ratings(team_principals_df, constructor_ratings, year_counts, 'team_principal')
     tp_ratings = tp_ratings.assign(
         raw_score=lambda d: d['results_delivery'],
         normalized_score=lambda d: d['development_score'],
@@ -692,7 +790,7 @@ def main():
     # 5. CHIEF ENGINEER SEASON RATINGS
     # ------------------------------------------------------------------
     print('Building chief engineer ratings...')
-    engineer_ratings = build_team_leader_ratings(team_engineers_df, constructor_ratings, year_counts, 'chief_engineer')
+    engineer_ratings, engineer_enriched = build_team_leader_ratings(team_engineers_df, constructor_ratings, year_counts, 'chief_engineer')
     engineer_ratings = engineer_ratings.assign(
         raw_score=lambda d: d['results_delivery'],
         normalized_score=lambda d: d['development_score'],
@@ -704,13 +802,61 @@ def main():
     # 6. CAR DESIGNER SEASON RATINGS
     # ------------------------------------------------------------------
     print('Building car designer ratings...')
-    car_designer_ratings = build_team_leader_ratings(car_designers_df, constructor_ratings, year_counts, 'car_designer')
+    car_designer_ratings, designer_enriched = build_team_leader_ratings(car_designers_df, constructor_ratings, year_counts, 'car_designer')
     car_designer_ratings = car_designer_ratings.assign(
         raw_score=lambda d: d['results_delivery'],
         normalized_score=lambda d: d['development_score'],
         rating=lambda d: d['season_overall'],
         source='car_designers',
     )
+
+    # ------------------------------------------------------------------
+    # WRITE ENRICHED DATA BACK TO SOURCE TABLES
+    # ------------------------------------------------------------------
+    print('\nWriting enriched intermediate data back to source tables...')
+
+    write_back_source_table(driver_enriched, 'driver_seasons', [
+        'driver_id', 'driver_name', 'year', 'position', 'points',
+        'race_wins', 'pole_positions', 'constructors',
+        'race_count', 'max_win_points', 'max_points_available', 'n_drivers',
+        'win_rate', 'points_rate', 'dominance_rate',
+        'normalized_position', 'pawe',
+        'pole_rate',
+        'points_harvest_rate', 'consistency_raw',
+        'champ_percentile',
+    ])
+
+    write_back_source_table(constructor_enriched, 'constructor_seasons', [
+        'constructor_id', 'constructor_name', 'year', 'position', 'points',
+        'race_wins', 'pole_positions',
+        'race_count', 'max_win_points', 'second_place_points',
+        'max_constructor_points', 'n_constructors',
+        'win_rate',
+        'competitiveness_rate',
+        'pole_rate',
+        'champ_percentile',
+    ])
+
+    write_back_source_table(engine_enriched, 'constructor_seasons_with_engines', [
+        'year', 'team_name', 'engine_manufacturer_name', 'position', 'points',
+        'race_wins', 'pole_positions',
+        'race_count', 'max_win_points', 'second_place_points',
+        'max_constructor_points', 'n_constructors',
+        'pole_rate', 'points_harvest_rate',
+    ])
+
+    personnel_write_cols = [
+        'year', 'name', 'team',
+        'constructor_match',
+        'constructor_season_overall', 'competitiveness_score', 'champ_percentile',
+        'prev_champ_percentile', 'development_delta',
+        'historical_avg_percentile', 'overperformance',
+        'streak',
+    ]
+    write_back_source_table(tp_enriched, 'team_principals', personnel_write_cols)
+    write_back_source_table(designer_enriched, 'car_designers', personnel_write_cols)
+    write_back_source_table(engineer_enriched, 'team_engineers',
+                            personnel_write_cols + ['driver'])
 
     # ------------------------------------------------------------------
     # Assemble all season ratings into component_ratings
@@ -761,11 +907,36 @@ def main():
     save_to_table(career_ratings, 'career_ratings')
 
     # ------------------------------------------------------------------
+    # Compute and write decade ratings
+    # ------------------------------------------------------------------
+    print('Computing decade aggregations...')
+    decade_frames = []
+
+    for role, ratings_df in [
+        ('driver', driver_ratings),
+        ('chassis', constructor_ratings),
+        ('engine', engine_ratings),
+        ('team_principal', tp_ratings),
+        ('chief_engineer', engineer_ratings),
+        ('car_designer', car_designer_ratings),
+    ]:
+        decade_df = compute_decade_overall(ratings_df, 'component_name')
+        decade_df['role'] = role
+        decade_frames.append(decade_df)
+
+    decade_ratings = pd.concat(decade_frames, ignore_index=True)
+
+    print('Creating decade_ratings table...')
+    create_decade_ratings_table()
+    print(f'Writing {len(decade_ratings)} rows to decade_ratings...')
+    save_to_table(decade_ratings, 'decade_ratings')
+
+    # ------------------------------------------------------------------
     # Sanity checks
     # ------------------------------------------------------------------
     run_sanity_checks(component_ratings)
 
-    print('Done. component_ratings and career_ratings tables are ready.')
+    print('Done. component_ratings, career_ratings, and decade_ratings tables are ready.')
 
 
 if __name__ == '__main__':
