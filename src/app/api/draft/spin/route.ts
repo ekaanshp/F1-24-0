@@ -9,7 +9,7 @@ export async function POST(request: NextRequest) {
     const state = await getNextDraftSpin(draftId);
     return NextResponse.json({
       draftId: state.draftId,
-      year: state.year,
+      decade: state.decade,
       slotIndex: state.slotIndex,
       totalSlots: 8,
       options: state.options,

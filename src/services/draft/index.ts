@@ -1,5 +1,6 @@
 import { db } from '@/lib/db';
 import { redis } from '@/lib/redis';
+import { getTierGrade, scaleNonDriverRating } from '@/services/simulation';
 
 const DRAFT_STATE_PREFIX = 'draft:';
 const DEFAULT_OPTIONS_PER_SLOT = 3;
@@ -19,6 +20,7 @@ export interface ComponentOption {
   team: string | null;
   rating: number;
   source: string;
+  tierGrade: string;
 }
 
 export interface DraftSelection {
@@ -27,11 +29,12 @@ export interface DraftSelection {
   team: string | null;
   rating: number;
   source: string;
+  tierGrade: string;
 }
 
 interface DraftState {
   draftId: string;
-  year: number;
+  decade: string;
   slotIndex: number;
   selections: DraftSelection[];
   options: ComponentOption[];
@@ -65,54 +68,58 @@ const shuffle = <T>(items: T[]): T[] => {
   return copy;
 };
 
-const getAvailableYear = async (): Promise<number> => {
-  const years = await db.$queryRaw<Array<{ year: number }>>
-    `SELECT DISTINCT year FROM component_ratings ORDER BY year`;
+const getAvailableDecade = async (): Promise<string> => {
+  const decades = await db.$queryRaw<Array<{ decade: string }>>
+    `SELECT DISTINCT decade FROM decade_ratings ORDER BY decade`;
 
-  if (years.length === 0) {
-    throw new Error('No years available in component_ratings');
+  if (decades.length === 0) {
+    throw new Error('No decades available in decade_ratings');
   }
 
-  const choice = years[Math.floor(Math.random() * years.length)];
-  return choice.year;
+  const choice = decades[Math.floor(Math.random() * decades.length)];
+  return choice.decade;
 };
 
 const queryOptions = async (
-  year: number,
+  decade: string,
   role: string,
   excludedNames: string[] = [],
 ): Promise<ComponentOption[]> => {
   const excludedList = excludedNames.length > 0 ? excludedNames : [''];
   const rows = await db.$queryRaw<Array<{
     component_name: string;
-    team: string | null;
     rating: number;
-    source: string;
   }>>`
-    SELECT component_name, team, rating, source
-    FROM component_ratings
-    WHERE year = ${year}
+    SELECT component_name, rating
+    FROM decade_ratings
+    WHERE decade = ${decade}
       AND role = ${role}
       AND component_name NOT IN (${excludedList})
     ORDER BY rating DESC
     LIMIT 20
   `;
 
-  const options = rows.map((row) => ({
-    componentName: row.component_name,
-    team: row.team,
-    rating: Number(row.rating),
-    source: row.source,
-  }));
+  const options = rows.map((row) => {
+    const rawRating = Number(row.rating);
+    const isDriver = role === 'driver';
+    const displayRating = isDriver ? rawRating : scaleNonDriverRating(rawRating);
+    return {
+      componentName: row.component_name,
+      team: null,
+      rating: Math.round(displayRating),
+      source: 'decade_ratings',
+      tierGrade: getTierGrade(displayRating),
+    };
+  });
 
   return shuffle(options).slice(0, DEFAULT_OPTIONS_PER_SLOT);
 };
 
-const createDraftState = async (year: number): Promise<DraftState> => {
+const createDraftState = async (decade: string): Promise<DraftState> => {
   const draftId = crypto.randomUUID();
   const state: DraftState = {
     draftId,
-    year,
+    decade,
     slotIndex: 0,
     selections: [],
     options: [],
@@ -138,8 +145,8 @@ export const getNextDraftSpin = async (draftId?: string) => {
   }
 
   if (!state) {
-    const year = await getAvailableYear();
-    state = await createDraftState(year);
+    const decade = await getAvailableDecade();
+    state = await createDraftState(decade);
   }
 
   if (state.slotIndex >= DRAFT_SLOTS.length) {
@@ -149,7 +156,7 @@ export const getNextDraftSpin = async (draftId?: string) => {
   const currentSlot = DRAFT_SLOTS[state.slotIndex];
   const role = slotToRole(currentSlot);
   const excludedNames = state.selections.map((selection) => selection.componentName);
-  const options = await queryOptions(state.year, role, excludedNames);
+  const options = await queryOptions(state.decade, role, excludedNames);
 
   state.options = options;
   await saveDraftState(state);
@@ -182,6 +189,7 @@ export const selectDraftComponent = async (
     team: option.team,
     rating: option.rating,
     source: option.source,
+    tierGrade: option.tierGrade,
   });
   state.slotIndex += 1;
   state.options = [];

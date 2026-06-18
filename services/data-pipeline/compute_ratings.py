@@ -241,7 +241,7 @@ def compute_decade_overall(season_df: pd.DataFrame, entity_col: str) -> pd.DataF
 # ---------------------------------------------------------------------------
 
 def build_driver_season_ratings(driver_df: pd.DataFrame, year_counts: pd.DataFrame) -> pd.DataFrame:
-    """Compute per-season driver ratings.
+    """Compute per-season driver ratings using teammate comparison and baseline replacement model.
 
     DRIVER OVERALL = 0.30 × DOMINANCE
                    + 0.25 × RACE_CRAFT
@@ -252,7 +252,7 @@ def build_driver_season_ratings(driver_df: pd.DataFrame, year_counts: pd.DataFra
     df = driver_df[['driver_id', 'driver_name', 'year', 'position', 'points',
                      'race_wins', 'pole_positions', 'constructors']].copy()
     df = map_year_metadata(df)
-    df = df.merge(year_counts, on='year', how='left')
+    df = df.merge(year_counts.drop(columns=['n_constructors'], errors='ignore'), on='year', how='left')
     df['n_drivers'] = df['n_drivers'].replace(0, 1)
 
     # --- Sub-attribute 1: DOMINANCE (0.30) ---
@@ -278,27 +278,216 @@ def build_driver_season_ratings(driver_df: pd.DataFrame, year_counts: pd.DataFra
     df['consistency_raw'] = df['points_harvest_rate'] / df.groupby('year')['points_harvest_rate'].transform('max').replace(0, 1)
 
     # --- Sub-attribute 5: CHAMPIONSHIP_PEDIGREE (0.10) ---
-    # Direct percentile mapping, NO z-score (already era-normalized)
     df['champ_percentile'] = df.apply(
         lambda row: 1.0 if row['n_drivers'] <= 1 else 1.0 - ((row['position'] - 1) / (row['n_drivers'] - 1)),
         axis=1,
     )
 
-    # --- Apply Z-score → Φ → 0-100 → clamp for sub-attributes 1-4 ---
-    df['dominance_score'] = df.groupby('year')['dominance_rate'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
-    df['race_craft_score'] = df.groupby('year')['PAWE'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
-    df['qualifying_score'] = df.groupby('year')['pole_rate'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
-    df['consistency_score'] = df.groupby('year')['consistency_raw'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
-    df['championship_score'] = (df['champ_percentile'] * 100).clip(30, 99)
-
-    # --- Final weighted sum ---
-    df['season_overall'] = (
-        0.30 * df['dominance_score']
-        + 0.25 * df['race_craft_score']
-        + 0.20 * df['qualifying_score']
-        + 0.15 * df['consistency_score']
-        + 0.10 * df['championship_score']
+    # --- Compute raw Z-scores before teammate adjustments ---
+    df['dominance_score_raw'] = df.groupby('year')['dominance_rate'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
+    df['race_craft_score_raw'] = df.groupby('year')['PAWE'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
+    df['qualifying_score_raw'] = df.groupby('year')['pole_rate'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
+    df['consistency_score_raw'] = df.groupby('year')['consistency_raw'].transform(z_score).pipe(lambda s: normal_cdf(s) * 100).clip(30, 99)
+    df['championship_score_raw'] = (df['champ_percentile'] * 100).clip(30, 99)
+    df['season_overall_raw'] = (
+        0.30 * df['dominance_score_raw']
+        + 0.25 * df['race_craft_score_raw']
+        + 0.20 * df['qualifying_score_raw']
+        + 0.15 * df['consistency_score_raw']
+        + 0.10 * df['championship_score_raw']
     ).apply(clamp)
+
+    # --- Extract teammates and team stats to compute car standings and comparison ---
+    df['constructor_list'] = df['constructors'].fillna('').apply(lambda s: [c.strip() for c in s.split(',') if c.strip()])
+
+    flat_rows = []
+    for idx, row in df.iterrows():
+        for c in row['constructor_list']:
+            flat_rows.append({
+                'driver_id': row['driver_id'],
+                'year': int(row['year']),
+                'points': float(row['points'] or 0.0),
+                'race_wins': int(row['race_wins'] or 0),
+                'pole_positions': int(row['pole_positions'] or 0),
+                'position': int(row['position']),
+                'constructor': c
+            })
+
+    df_flat = pd.DataFrame(flat_rows)
+
+    const_year_groups = df_flat.groupby(['year', 'constructor'])
+    const_stats = const_year_groups.agg(
+        const_points=('points', 'sum'),
+        const_wins=('race_wins', 'sum'),
+        const_poles=('pole_positions', 'sum'),
+        const_drivers=('driver_id', 'nunique')
+    ).reset_index()
+
+    const_stats['const_rank'] = const_stats.groupby('year')['const_points'].rank(ascending=False, method='min')
+    const_counts = const_stats.groupby('year')['constructor'].nunique().rename('n_constructors').reset_index()
+    const_stats = const_stats.merge(const_counts, on='year', how='left')
+
+    teammate_rows = []
+    for idx, row in df_flat.iterrows():
+        t_mask = (df_flat['year'] == row['year']) & (df_flat['constructor'] == row['constructor']) & (df_flat['driver_id'] != row['driver_id'])
+        teammates = df_flat[t_mask]
+        
+        if not teammates.empty:
+            t_points = teammates['points'].mean()
+            t_wins = teammates['race_wins'].mean()
+            t_poles = teammates['pole_positions'].mean()
+            t_pos = teammates['position'].mean()
+            has_teammate = True
+        else:
+            t_points = 0.0
+            t_wins = 0.0
+            t_poles = 0.0
+            t_pos = row['position']
+            has_teammate = False
+            
+        teammate_rows.append({
+            'driver_id': row['driver_id'],
+            'year': row['year'],
+            'constructor': row['constructor'],
+            'has_teammate': has_teammate,
+            'teammate_avg_points': t_points,
+            'teammate_avg_wins': t_wins,
+            'teammate_avg_poles': t_poles,
+            'teammate_avg_pos': t_pos
+        })
+
+    df_teammates = pd.DataFrame(teammate_rows)
+    df_flat = df_flat.merge(df_teammates, on=['driver_id', 'year', 'constructor'], how='left')
+    df_flat = df_flat.merge(const_stats[['year', 'constructor', 'const_rank', 'n_constructors']], on=['year', 'constructor'], how='left')
+
+    driver_season_adjs = df_flat.groupby(['driver_id', 'year']).agg(
+        const_rank=('const_rank', 'mean'),
+        n_constructors=('n_constructors', 'first'),
+        has_teammate=('has_teammate', 'any'),
+        teammate_avg_points=('teammate_avg_points', 'mean'),
+        teammate_avg_wins=('teammate_avg_wins', 'mean'),
+        teammate_avg_poles=('teammate_avg_poles', 'mean'),
+        teammate_avg_pos=('teammate_avg_pos', 'mean')
+    ).reset_index()
+
+    df = df.merge(driver_season_adjs, on=['driver_id', 'year'], how='left')
+
+    # --- Apply Baseline Replacement Model (Model D) ---
+    def apply_baseline_replacement(row):
+        if not row['has_teammate']:
+            return pd.Series([
+                row['dominance_score_raw'],
+                row['race_craft_score_raw'],
+                row['qualifying_score_raw'],
+                row['consistency_score_raw'],
+                row['championship_score_raw'],
+                row['season_overall_raw']
+            ])
+        
+        # Car Quality Index (CQI)
+        n_const = row['n_constructors'] if pd.notna(row['n_constructors']) and row['n_constructors'] > 1 else 10
+        rank = row['const_rank'] if pd.notna(row['const_rank']) else 5
+        cqi = 1.0 - (rank - 1) / n_const
+        cqi = max(0.0, min(1.0, cqi))
+        
+        # Teammate comparison factor
+        pos_diff = row['teammate_avg_pos'] - row['position']
+        n_drv = row['n_drivers'] if pd.notna(row['n_drivers']) and row['n_drivers'] > 1 else 20
+        pos_diff_score = pos_diff / n_drv
+        
+        d_pts = row['points'] or 0.0
+        t_pts = row['teammate_avg_points'] or 0.0
+        
+        d_wins = row['race_wins'] or 0.0
+        t_wins = row['teammate_avg_wins'] or 0.0
+        d_poles = row['pole_positions'] or 0.0
+        t_poles = row['teammate_avg_poles'] or 0.0
+        
+        w_pos_raw = 0.5
+        w_pts_raw = 0.3
+        w_wins_raw = 0.1
+        w_poles_raw = 0.1
+        
+        # Scale points weight based on team points using exponential decay
+        p_team = d_pts + t_pts
+        if p_team > 0:
+            theta = 1.0 - math.exp(-p_team / 15.0)
+            w_pts_raw = 0.3 * theta
+            w_pos_raw = 0.5 + 0.3 * (1.0 - theta)
+        else:
+            w_pts_raw = 0.0
+            w_pos_raw = 0.8
+            
+        if d_wins + t_wins == 0:
+            w_wins_raw = 0.0
+            w_pos_raw += 0.05
+            w_pts_raw += 0.05
+            
+        if d_poles + t_poles == 0:
+            w_poles_raw = 0.0
+            w_pos_raw += 0.05
+            w_pts_raw += 0.05
+            
+        w_sum = w_pos_raw + w_pts_raw + w_wins_raw + w_poles_raw
+        w_pos = w_pos_raw / w_sum
+        w_pts = w_pts_raw / w_sum
+        w_wins = w_wins_raw / w_sum
+        w_poles = w_poles_raw / w_sum
+        
+        pts_diff_score = (d_pts / (d_pts + t_pts) - 0.5) if d_pts + t_pts > 0 else 0.0
+        wins_diff_score = (d_wins / (d_wins + t_wins) - 0.5) if d_wins + t_wins > 0 else 0.0
+        poles_diff_score = (d_poles / (d_poles + t_poles) - 0.5) if d_poles + t_poles > 0 else 0.0
+        
+        teammate_diff = w_pos * pos_diff_score + w_pts * pts_diff_score + w_wins * wins_diff_score + w_poles * poles_diff_score
+        teammate_factor = teammate_diff * 2.0  # scale to [-1.0, 1.0] range
+        
+        adj_scores = {}
+        sub_attrs = ['dominance_score_raw', 'race_craft_score_raw', 'qualifying_score_raw', 'consistency_score_raw']
+        
+        for attr in sub_attrs:
+            val = row[attr]
+            if teammate_factor > 0:
+                # Beat teammate: baseline maps teammate_factor from 0.0 to 1.0 -> 55.0 to 90.0
+                baseline = 55.0 + 35.0 * teammate_factor
+                # Boost if car is poor
+                baseline = baseline + 10.0 * (1.0 - cqi)
+                adj_val = max(val, baseline)
+            else:
+                # Lost to teammate: apply car-quality penalty
+                penalty = 20.0 * abs(teammate_factor) * cqi
+                adj_val = max(30.0, val - penalty)
+            adj_scores[attr] = adj_val
+            
+        # Championship score
+        val_champ = row['championship_score_raw']
+        if teammate_factor > 0:
+            adj_scores['championship_score'] = max(val_champ, 55.0 + 35.0 * teammate_factor)
+        else:
+            penalty = 20.0 * abs(teammate_factor) * cqi
+            adj_scores['championship_score'] = max(30.0, val_champ - penalty)
+            
+        # Recompute season overall as weighted sum + general lift (+5.0)
+        overall = (
+            0.30 * adj_scores['dominance_score_raw']
+            + 0.25 * adj_scores['race_craft_score_raw']
+            + 0.20 * adj_scores['qualifying_score_raw']
+            + 0.15 * adj_scores['consistency_score_raw']
+            + 0.10 * adj_scores['championship_score']
+        ) + 5.0
+        overall = max(30.0, min(99.0, overall))
+        
+        return pd.Series([
+            adj_scores['dominance_score_raw'],
+            adj_scores['race_craft_score_raw'],
+            adj_scores['qualifying_score_raw'],
+            adj_scores['consistency_score_raw'],
+            adj_scores['championship_score'],
+            overall
+        ])
+
+    df[[
+        'dominance_score', 'race_craft_score', 'qualifying_score', 'consistency_score', 'championship_score', 'season_overall'
+    ]] = df.apply(apply_baseline_replacement, axis=1)
 
     # Rename for schema compatibility
     df = df.rename(columns={'PAWE': 'pawe'})
