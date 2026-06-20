@@ -1,19 +1,26 @@
 // =============================================================================
 // Draft Page — /draft (The Spin Engine)
 // =============================================================================
-// The interactive core of the game. This page holds the UI for:
-// - Randomized spins (team/era selection)
-// - 8 component slots being filled one at a time
-// - Component selection after each spin
-//
-// TODO: Build the spin animation, component cards, and slot tracker
-// =============================================================================
 
-export default function DraftPage() {
+import type { Metadata } from 'next';
+import DraftManager from '@/components/DraftManager';
+import type { GameMode } from '@/types';
+
+export const metadata: Metadata = {
+  title: 'Draft Your Team — F1 TeamBuilder',
+  description: 'Spin for legendary F1 components and build your ultimate team.',
+};
+
+export default function DraftPage({
+  searchParams,
+}: {
+  searchParams: { mode?: string };
+}) {
+  const gameMode: GameMode = searchParams.mode === 'hardcore' ? 'hardcore' : 'regular';
+
   return (
     <main>
-      <h1>The Draft — F1 TeamBuilder</h1>
-      <p>Draft page placeholder. Build the spin engine UI here.</p>
+      <DraftManager gameMode={gameMode} />
     </main>
   );
 }

@@ -1,26 +1,345 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700&display=swap');
 @import "tailwindcss";
 
+/* =============================================================================
+   F1 TeamBuilder — Professional Design System
+   =============================================================================
+   Clean, premium dark theme inspired by F1 broadcast graphics.
+   Subtle depth, restrained color accents, and refined typography.
+   ============================================================================= */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Core palette — carbon-dark surfaces */
+  --f1-red: #E10600;
+  --f1-dark: #0a0a0f;
+  --surface: #111118;
+  --surface-elevated: #18181f;
+  --surface-hover: #1e1e28;
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --border-active: rgba(255, 255, 255, 0.14);
+
+  /* Accent colors — refined, not neon */
+  --accent-blue: #639BD2;
+  --accent-amber: #DAA520;
+  --accent-green: #4CAF82;
+
+  /* Text */
+  --text-primary: #E8E8ED;
+  --text-secondary: #8B8FA3;
+  --text-muted: #505368;
+
+  /* Fonts */
+  --font-heading: 'Orbitron', sans-serif;
+  --font-body: 'Inter', sans-serif;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-background: var(--f1-dark);
+  --color-foreground: var(--text-primary);
+  --font-sans: var(--font-body);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* =============================================================================
+   Base Styles
+   ============================================================================= */
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--f1-dark);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Racing stripe — refined 2px accent at top of page */
+body::after {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--f1-red) 0%, var(--f1-red) 30%, var(--accent-amber) 50%, var(--accent-blue) 75%, var(--accent-green) 100%);
+  z-index: 100;
+}
+
+/* =============================================================================
+   Surface & Panel Styles
+   ============================================================================= */
+
+.overlay-panel {
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+}
+
+.step-card {
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  transition: border-color 0.2s ease;
+}
+
+.step-card:hover {
+  border-color: var(--border-active);
+}
+
+.setup-card {
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+}
+
+.leaderboard-card {
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+}
+
+/* =============================================================================
+   Progress Bar
+   ============================================================================= */
+
+.progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-elevated);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s ease;
+}
+
+/* =============================================================================
+   Buttons
+   ============================================================================= */
+
+.btn-primary {
+  background: var(--f1-red);
+  color: white;
+  font-family: var(--font-heading);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border: none;
+  border-radius: 12px;
+  padding: 14px 32px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.btn-primary:hover {
+  background: #c80500;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(225, 6, 0, 0.2);
+}
+
+.btn-primary:active {
+  transform: translateY(0);
+}
+
+.btn-primary:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.btn-secondary {
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  font-family: var(--font-heading);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 14px 32px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-secondary:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-active);
+}
+
+.btn-spin {
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  font-family: var(--font-heading);
+  font-weight: 800;
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  border: 2px solid var(--accent-blue);
+  border-radius: 14px;
+  padding: 16px 40px;
+  cursor: pointer;
+  transition: all 0.25s ease;
+}
+
+.btn-spin:hover {
+  background: rgba(99, 155, 210, 0.08);
+  border-color: var(--accent-blue);
+  box-shadow: 0 4px 20px rgba(99, 155, 210, 0.12);
+  transform: translateY(-1px);
+}
+
+.btn-spin:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* =============================================================================
+   Lifeline Badges & Buttons
+   ============================================================================= */
+
+.lifeline-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  transition: all 0.2s ease;
+}
+
+.lifeline-badge.used {
+  opacity: 0.35;
+}
+
+.lifeline-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  transition: all 0.2s ease;
+  outline: none;
+}
+
+.lifeline-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--border-active);
+  transform: translateY(-1px);
+}
+
+/* =============================================================================
+   Card Styles
+   ============================================================================= */
+
+.card-slot {
+  background: var(--surface);
+  border: 1px dashed var(--border-subtle);
+  border-radius: 14px;
+  padding: 20px;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.card-slot.filled {
+  border: 1px solid var(--border-active);
+  border-style: solid;
+  background: var(--surface-elevated);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.card-option {
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  padding: 20px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.card-option:hover {
+  border-color: var(--accent-blue);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  background: var(--surface-elevated);
+}
+
+/* =============================================================================
+   Leaderboard
+   ============================================================================= */
+
+.leaderboard-row {
+  display: grid;
+  grid-template-columns: 60px 1fr 120px 100px 100px;
+  align-items: center;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border-subtle);
+  transition: all 0.15s ease;
+}
+
+.leaderboard-row:hover {
+  background: rgba(99, 155, 210, 0.04);
+}
+
+.rank-badge {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 0.875rem;
+}
+
+.rank-1 { background: linear-gradient(135deg, #DAA520, #B8860B); color: #0a0a0f; }
+.rank-2 { background: linear-gradient(135deg, #A0A0A0, #808080); color: #0a0a0f; }
+.rank-3 { background: linear-gradient(135deg, #A0522D, #8B4513); color: #0a0a0f; }
+
+/* =============================================================================
+   Tier Grade Colors
+   ============================================================================= */
+
+.tier-s  { color: var(--accent-amber); }
+.tier-a  { color: #D4764E; }
+.tier-b  { color: var(--accent-blue); }
+.tier-c  { color: var(--accent-green); }
+.tier-d  { color: var(--text-secondary); }
+
+/* =============================================================================
+   Scrollbar
+   ============================================================================= */
+
+::-webkit-scrollbar {
+  width: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--surface-hover);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* =============================================================================
+   Utility
+   ============================================================================= */
+
+.font-heading {
+  font-family: var(--font-heading);
 }

@@ -675,6 +675,10 @@ def build_team_leader_ratings(
     if 'team' in constructors.columns:
         constructors = constructors.drop(columns=['team'])
     constructors = constructors.rename(columns={'component_name': 'team'})
+    # Prevent duplicate joins (e.g. from multiple chassis entrants in early F1)
+    constructors = constructors.sort_values('season_overall', ascending=False)
+    constructors = constructors.drop_duplicates(subset=['year', 'team'], keep='first')
+
 
     # Merge personnel with computed constructor data
     base_cols = ['year', 'name', 'team']
@@ -703,6 +707,8 @@ def build_team_leader_ratings(
     if 'team' in constructors_for_percentile.columns:
         constructors_for_percentile = constructors_for_percentile.drop(columns=['team'])
     constructors_for_percentile = constructors_for_percentile.rename(columns={'component_name': 'team'})
+    constructors_for_percentile = constructors_for_percentile.sort_values('season_overall', ascending=False)
+    constructors_for_percentile = constructors_for_percentile.drop_duplicates(subset=['year', 'team'], keep='first')
     constructors_for_percentile = constructors_for_percentile.merge(year_counts, on='year', how='left')
     constructors_for_percentile['n_constructors'] = constructors_for_percentile['n_constructors'].replace(0, 1)
     constructors_for_percentile['champ_percentile'] = constructors_for_percentile.apply(

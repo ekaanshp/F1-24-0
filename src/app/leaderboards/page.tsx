@@ -1,17 +1,41 @@
 // =============================================================================
 // Leaderboards Page — /leaderboards
 // =============================================================================
-// Global ranking of all players, sorted by championship points.
-// Highlights users who achieved the 24-0 perfect season.
-//
-// TODO: Build the paginated leaderboard table with ranking, points, wins
-// =============================================================================
 
-export default function LeaderboardsPage() {
+import type { Metadata } from 'next';
+import type { LeaderboardRow } from '@/types';
+import { getTopScores } from '@/services/leaderboard';
+import LeaderboardClient from '@/components/LeaderboardClient';
+
+export const metadata: Metadata = {
+  title: 'Leaderboard — F1 TeamBuilder',
+  description: 'See the top F1 TeamBuilder scores from players around the world.',
+};
+
+export const revalidate = 30; // Revalidate every 30 seconds
+
+export default async function LeaderboardsPage() {
+  let allScores: LeaderboardRow[] = [];
+  let regularScores: LeaderboardRow[] = [];
+  let hardcoreScores: LeaderboardRow[] = [];
+
+  try {
+    [allScores, regularScores, hardcoreScores] = await Promise.all([
+      getTopScores(50),
+      getTopScores(50, 'regular'),
+      getTopScores(50, 'hardcore'),
+    ]);
+  } catch {
+    // Gracefully handle if table doesn't exist yet
+  }
+
   return (
     <main>
-      <h1>Leaderboards — F1 TeamBuilder</h1>
-      <p>Leaderboards page placeholder. Build the global rankings table here.</p>
+      <LeaderboardClient
+        allScores={allScores}
+        regularScores={regularScores}
+        hardcoreScores={hardcoreScores}
+      />
     </main>
   );
 }

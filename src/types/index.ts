@@ -1,65 +1,105 @@
 // =============================================================================
 // Shared TypeScript Types — F1 TeamBuilder
 // =============================================================================
-// Central type definitions used across the application.
-// Add your domain types here as you build each feature.
-// =============================================================================
 
-import { TEAM_SLOTS, DRAFT_STATUS } from '@/lib/constants';
+/** Game mode — determines whether stats are visible during the draft */
+export type GameMode = 'regular' | 'hardcore';
 
-/** A single team component slot name */
-export type TeamSlot = (typeof TEAM_SLOTS)[number];
+/** The 8 team component slot identifiers */
+export type DraftSlot =
+  | 'driver1'
+  | 'driver2'
+  | 'chassis'
+  | 'engine'
+  | 'team_principal'
+  | 'car_designer'
+  | 'lead_engineer1'
+  | 'lead_engineer2';
 
-/** Draft session status */
-export type DraftStatus = (typeof DRAFT_STATUS)[keyof typeof DRAFT_STATUS];
-
-/** The team/era combination returned by a spin */
-export interface SpinResult {
-  id: string;
-  era: string; // e.g., "2004"
-  team: string; // e.g., "Ferrari"
-  // TODO: Add available components for this team/era
+/** Metadata about each draft slot (display name, role mapping) */
+export interface SlotMeta {
+  slot: DraftSlot;
+  label: string;
+  role: string;
+  icon: string;
 }
 
-/** A single selected component in the roster */
-export interface RosterComponent {
-  slot: TeamSlot;
-  name: string;
-  // TODO: Add rating, image, era, team, etc.
-}
-
-/** A fully assembled team roster */
-export interface TeamRoster {
-  id: string;
-  userId: string;
-  draftSessionId: string;
-  components: RosterComponent[];
-}
-
-/** A single race result in the simulation */
-export interface RaceResult {
-  raceNumber: number; // 1–24
-  trackName: string;
-  position: number;
+/** A single option returned by the server during a spin */
+export interface ComponentOption {
+  componentName: string;
+  team: string | null;
+  decade: string;
+  wins: number;
+  poles: number;
   points: number;
-  // TODO: Add detailed stats (lap times, incidents, etc.)
+  displayName?: string;
 }
 
-/** Full season simulation output */
-export interface SeasonResult {
-  rosterId: string;
-  totalPoints: number;
-  totalWins: number;
-  isPerfectSeason: boolean; // 24-0
-  races: RaceResult[];
+/** A component that has been selected for a roster slot */
+export interface DraftSelection {
+  slot: DraftSlot;
+  componentName: string;
+  team: string | null;
+  decade: string;
+  wins: number;
+  poles: number;
+  points: number;
+  displayName?: string;
 }
 
-/** Leaderboard entry for global rankings */
+/** The full roster state tracked in React */
+export type RosterState = Partial<Record<DraftSlot, DraftSelection>>;
+
+/** Leaderboard entry as displayed in the UI */
 export interface LeaderboardRow {
   rank: number;
-  userId: string;
-  userName: string;
+  playerName: string;
   totalPoints: number;
-  wins: number;
-  isPerfectSeason: boolean;
+  decade: string;
+  gameMode: GameMode;
+  createdAt: string;
+  driver1: string;
+  driver2: string;
+  chassis: string;
+  engine: string;
+  teamPrincipal: string;
+  carDesigner: string;
+  leadEngineer1: string;
+  leadEngineer2: string;
+}
+
+/** Payload sent to submitFinalScore server action */
+export interface SubmitPayload {
+  playerName: string;
+  gameMode: GameMode;
+  selections: Array<{
+    slot: DraftSlot;
+    componentName: string;
+    decade: string;
+    displayName?: string;
+  }>;
+}
+
+/** Response from submitFinalScore */
+export interface SubmitResult {
+  success: boolean;
+  totalPoints?: number;
+  rank?: number;
+  error?: string;
+}
+
+/** A group of options for a single role, returned by getAllPoolsForTeam */
+export interface GroupedOption {
+  role: string;
+  label: string;
+  icon: string;
+  availableSlots: DraftSlot[];
+  options: ComponentOption[];
+}
+
+/** Component option paired with the role it fills */
+export interface SelectionWithRole {
+  option: ComponentOption;
+  role: string;
+  targetSlot: DraftSlot;
 }
