@@ -23,7 +23,25 @@ interface SpinningWheelProps {
   gameMode?: GameMode;
 }
 
-type Phase = 'spinning' | 'reveal' | 'options';
+type Phase = 'spinning' | 'options';
+
+const DECADES_POOL = ['1950s', '1960s', '1970s', '1980s', '1990s', '2000s', '2010s', '2020s'];
+const TEAMS_POOL = [
+  'Ferrari', 'McLaren', 'Williams', 'Mercedes', 'Red Bull', 
+  'Lotus', 'Brabham', 'Benetton', 'Renault', 'Tyrrell', 
+  'Alfa Romeo', 'Maserati', 'Cooper', 'BRM', 'Honda',
+  'Aston Martin', 'Alpine', 'Toro Rosso', 'AlphaTauri', 'Sauber',
+  'Force India', 'Racing Point', 'Jordan', 'Minardi', 'Stewart'
+];
+
+function generateReel(target: string, pool: string[], length: number) {
+  const reel = [];
+  for (let i = 0; i < length - 1; i++) {
+    reel.push(pool[Math.floor(Math.random() * pool.length)]);
+  }
+  reel.push(target);
+  return reel;
+}
 
 export default function SpinningWheel({
   filledSlots,
@@ -36,6 +54,11 @@ export default function SpinningWheel({
 }: SpinningWheelProps) {
   const [phase, setPhase] = useState<Phase>('spinning');
   const [currentSpin, setCurrentSpin] = useState<{ decade: string; team: string } | null>(null);
+  
+  // Reels for slot machine animation
+  const [decadeReel, setDecadeReel] = useState<string[]>([]);
+  const [teamReel, setTeamReel] = useState<string[]>([]);
+  
   const [groups, setGroups] = useState<GroupedOption[]>([]);
   const [isLoadingOptions, setIsLoadingOptions] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,10 +103,12 @@ export default function SpinningWheel({
     }
 
     setCurrentSpin({ decade: result.decade, team: result.team });
+    setDecadeReel(generateReel(result.decade, DECADES_POOL, 20));
+    setTeamReel(generateReel(result.team, TEAMS_POOL, 30));
 
-    // Show reveal animation
-    setPhase('reveal');
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    // Wait for the slot machine animation to finish
+    // Era finishes at 2s, Team finishes at 3s. Wait 3.5s before showing options.
+    await new Promise((resolve) => setTimeout(resolve, 3500));
 
     // Fetch all available options
     await fetchAllOptions(result.decade, result.team);
@@ -106,9 +131,12 @@ export default function SpinningWheel({
     }
 
     setCurrentSpin({ decade: result.decade, team: result.team });
+    // Keep the decade static (length 1 so it doesn't spin), but spin the team
+    setDecadeReel([result.decade]);
+    setTeamReel(generateReel(result.team, TEAMS_POOL, 30));
 
-    setPhase('reveal');
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+    // Wait for the slot machine animation
+    await new Promise((resolve) => setTimeout(resolve, 3500));
     await fetchAllOptions(result.decade, result.team);
   }, [currentSpin, lifelinesUsed.respinTeam, onUseLifeline, fetchAllOptions]);
 
@@ -129,9 +157,11 @@ export default function SpinningWheel({
     }
 
     setCurrentSpin({ decade: result.decade, team: result.team });
+    setDecadeReel(generateReel(result.decade, DECADES_POOL, 20));
+    setTeamReel(generateReel(result.team, TEAMS_POOL, 30));
 
-    setPhase('reveal');
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+    // Wait for the slot machine animation
+    await new Promise((resolve) => setTimeout(resolve, 3500));
     await fetchAllOptions(result.decade, result.team);
   }, [currentSpin, lifelinesUsed.respinBoth, onUseLifeline, fetchAllOptions]);
 
@@ -163,62 +193,58 @@ export default function SpinningWheel({
           className="overlay-panel relative z-10 w-full max-w-5xl max-h-[90vh] flex flex-col p-8"
         >
 
-          {/* === SPINNING PHASE === */}
+          {/* === SPINNING SLOT MACHINE === */}
           {phase === 'spinning' && (
             <div className="flex-1 flex flex-col items-center justify-center py-16">
-              <motion.div
-                animate={{ rotate: 360 }}
-                transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }}
-                className="w-20 h-20 rounded-full border-4 border-t-transparent mb-8"
-                style={{ borderColor: 'var(--accent-blue)', borderTopColor: 'transparent' }}
-              />
-              <p className="font-heading text-base tracking-widest uppercase animate-pulse"
-                style={{ color: 'var(--accent-blue)' }}>
-                SPINNING ERA &amp; TEAM...
-              </p>
-            </div>
-          )}
-
-          {/* === REVEAL PHASE === */}
-          {phase === 'reveal' && currentSpin && (
-            <div className="flex-1 flex flex-col items-center justify-center py-16">
-              <motion.div
-                initial={{ scale: 0, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                transition={{ type: 'spring', stiffness: 200, damping: 15 }}
-                className="text-center"
-              >
-                <motion.div
-                  initial={{ y: -20, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  transition={{ delay: 0.2 }}
-                  className="mb-4"
-                >
-                  <span className="text-xs font-heading uppercase tracking-[0.3em] block mb-2"
-                    style={{ color: 'var(--text-muted)' }}>
+              <div className="flex flex-row justify-center gap-8 md:gap-16 w-full">
+                
+                {/* Era Column */}
+                <div className="flex flex-col items-center">
+                  <span className="text-xs font-heading uppercase tracking-[0.3em] block mb-6" style={{ color: 'var(--text-muted)' }}>
                     Your Era
                   </span>
-                  <span className="font-heading text-4xl md:text-5xl font-black"
-                    style={{ color: 'var(--accent-blue)' }}>
-                    {currentSpin.decade}
-                  </span>
-                </motion.div>
+                  <div 
+                    className="h-[100px] overflow-hidden relative w-[160px] md:w-[200px]" 
+                    style={{ WebkitMaskImage: 'linear-gradient(to bottom, transparent, black 25%, black 75%, transparent)' }}
+                  >
+                    <motion.div
+                      initial={{ y: 0 }}
+                      animate={{ y: -((decadeReel.length - 1) * 100) }}
+                      transition={{ duration: 2, ease: [0.1, 0.7, 0.1, 1] }}
+                    >
+                      {decadeReel.map((item, i) => (
+                        <div key={i} className="h-[100px] flex items-center justify-center font-heading text-4xl md:text-5xl font-black" style={{ color: 'var(--accent-blue)' }}>
+                          {item}
+                        </div>
+                      ))}
+                    </motion.div>
+                  </div>
+                </div>
 
-                <motion.div
-                  initial={{ y: 20, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  transition={{ delay: 0.5 }}
-                >
-                  <span className="text-xs font-heading uppercase tracking-[0.3em] block mb-2"
-                    style={{ color: 'var(--text-muted)' }}>
+                {/* Team Column */}
+                <div className="flex flex-col items-center">
+                  <span className="text-xs font-heading uppercase tracking-[0.3em] block mb-6" style={{ color: 'var(--text-muted)' }}>
                     Your Team
                   </span>
-                  <span className="font-heading text-3xl md:text-4xl font-black"
-                    style={{ color: 'var(--accent-amber)' }}>
-                    {currentSpin.team}
-                  </span>
-                </motion.div>
-              </motion.div>
+                  <div 
+                    className="h-[100px] overflow-hidden relative w-[200px] md:w-[320px]" 
+                    style={{ WebkitMaskImage: 'linear-gradient(to bottom, transparent, black 25%, black 75%, transparent)' }}
+                  >
+                    <motion.div
+                      initial={{ y: 0 }}
+                      animate={{ y: -((teamReel.length - 1) * 100) }}
+                      transition={{ duration: 3, ease: [0.1, 0.7, 0.1, 1] }}
+                    >
+                      {teamReel.map((item, i) => (
+                        <div key={i} className="h-[100px] flex items-center justify-center font-heading text-3xl md:text-4xl font-black text-center px-4 leading-tight" style={{ color: 'var(--accent-amber)' }}>
+                          {item}
+                        </div>
+                      ))}
+                    </motion.div>
+                  </div>
+                </div>
+
+              </div>
             </div>
           )}
 
