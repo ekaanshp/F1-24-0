@@ -47,8 +47,8 @@ export default function HomeClient({ topScores }: HomeClientProps) {
             style={{ color: 'var(--text-secondary)' }}
           >
             Spin to land a random era and team. Draft 8 roster slots
-            from across F1 history — drivers, engineers, chassis, engines,
-            and more. Use your lifelines wisely!
+            from across F1 history — from drivers and their engineers all the way to the chassis. 
+            Use your lifelines wisely! Can you win every race in a F1 season with your team?
           </motion.p>
         </motion.div>
 
@@ -86,21 +86,8 @@ export default function HomeClient({ topScores }: HomeClientProps) {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.6 }}
-          className="setup-card w-full max-w-md p-8"
+          className="setup-card w-full max-w-lg p-8"
         >
-          {/* Lifeline Preview */}
-          <div className="flex justify-center gap-4 mb-6">
-            <div className="lifeline-badge">
-              <span className="text-sm">🔄</span>
-              <span className="text-[10px] font-heading font-bold tracking-wider"
-                style={{ color: 'var(--accent-blue)' }}>RESPIN TEAM ×1</span>
-            </div>
-            <div className="lifeline-badge">
-              <span className="text-sm">🎲</span>
-              <span className="text-[10px] font-heading font-bold tracking-wider"
-                style={{ color: 'var(--accent-amber)' }}>RESPIN BOTH ×1</span>
-            </div>
-          </div>
 
           {/* Start Buttons */}
           <div className="flex flex-col gap-3">
@@ -111,7 +98,7 @@ export default function HomeClient({ topScores }: HomeClientProps) {
                 className="btn-primary w-full text-lg py-4"
                 id="start-draft-btn"
               >
-                📊 START REGULAR DRAFT
+                START REGULAR DRAFT
               </motion.button>
             </Link>
             <Link href="/draft?mode=hardcore">
@@ -126,7 +113,7 @@ export default function HomeClient({ topScores }: HomeClientProps) {
                 }}
                 id="start-hardcore-draft-btn"
               >
-                🔥 START HARDCORE DRAFT
+                🔥 START HARDCORE DRAFT 🔥
               </motion.button>
             </Link>
           </div>
@@ -138,7 +125,7 @@ export default function HomeClient({ topScores }: HomeClientProps) {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.7 }}
-            className="leaderboard-card w-full max-w-md mt-6 p-6"
+            className="leaderboard-card w-full max-w-lg mt-6 p-6"
           >
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-heading text-sm font-bold tracking-wider uppercase"

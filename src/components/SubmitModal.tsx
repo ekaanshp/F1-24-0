@@ -10,6 +10,8 @@ import Link from 'next/link';
 import { checkNameAvailability, submitFinalScore, calculateScore } from '@/app/actions/game';
 import { DRAFT_SLOTS, PLAYER_NAME_REGEX } from '@/lib/constants';
 import type { DraftSelection, DraftSlot, SubmitResult, GameMode } from '@/types';
+import { ConfettiFireworks } from '@/components/ui/confetti-fireworks';
+import { ConfettiSideCannons } from '@/components/ui/confetti-side-cannons';
 
 interface SubmitModalProps {
   roster: Record<DraftSlot, DraftSelection>;
@@ -327,7 +329,14 @@ export default function SubmitModal({
 
           {/* Action buttons */}
           {!isLoadingScore && (
-            <div className="space-y-3">
+            <>
+              {teamScore !== null && teamScore >= 95 && (
+                <>
+                  <ConfettiFireworks />
+                  <ConfettiSideCannons />
+                </>
+              )}
+              <div className="space-y-3">
               <button
                 onClick={() => setPhase('nickname')}
                 className="btn-primary w-full text-center py-4 text-base font-bold tracking-wider"
@@ -341,6 +350,7 @@ export default function SubmitModal({
                 🎮 SKIP &amp; PLAY AGAIN
               </Link>
             </div>
+            </>
           )}
         </motion.div>
       </div>
