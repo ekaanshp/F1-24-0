@@ -11,12 +11,13 @@ export const metadata: Metadata = {
   description: 'Spin for legendary F1 components and build your ultimate team.',
 };
 
-export default function DraftPage({
+export default async function DraftPage({
   searchParams,
 }: {
-  searchParams: { mode?: string };
+  searchParams: Promise<{ mode?: string }>;
 }) {
-  const gameMode: GameMode = searchParams.mode === 'hardcore' ? 'hardcore' : 'regular';
+  const resolvedParams = await searchParams;
+  const gameMode: GameMode = resolvedParams.mode === 'hardcore' ? 'hardcore' : 'regular';
 
   return (
     <main>
