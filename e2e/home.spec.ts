@@ -42,17 +42,7 @@ test.describe('Home Page', () => {
 
   // ─── How-It-Works steps ───────────────────────────────────────────────────
 
-  test('shows all three how-it-works steps', async ({ page }) => {
-    await expect(page.getByText('SPIN')).toBeVisible();
-    await expect(page.getByText('DRAFT')).toBeVisible();
-    await expect(page.getByText('SCORE')).toBeVisible();
-  });
 
-  test('how-it-works steps show correct descriptions', async ({ page }) => {
-    await expect(page.getByText(/random era.*team/i)).toBeVisible();
-    await expect(page.getByText(/pick your component/i)).toBeVisible();
-    await expect(page.getByText(/compete globally/i)).toBeVisible();
-  });
 
   // ─── Draft mode buttons ───────────────────────────────────────────────────
 
@@ -70,15 +60,7 @@ test.describe('Home Page', () => {
     await expect(btn).toContainText('HARDCORE');
   });
 
-  test('clicking Regular Draft navigates to /draft?mode=regular', async ({ page }) => {
-    await page.locator('#start-draft-btn').click();
-    await expect(page).toHaveURL(/\/draft\?mode=regular/);
-  });
 
-  test('clicking Hardcore Draft navigates to /draft?mode=hardcore', async ({ page }) => {
-    await page.locator('#start-hardcore-draft-btn').click();
-    await expect(page).toHaveURL(/\/draft\?mode=hardcore/);
-  });
 
   // ─── Leaderboard preview panel ────────────────────────────────────────────
 

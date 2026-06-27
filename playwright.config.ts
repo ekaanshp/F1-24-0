@@ -34,7 +34,7 @@ export default defineConfig({
 
   use: {
     // Base URL — all page.goto('/') calls resolve here
-    baseURL: 'http://localhost:3000',
+    baseURL: 'http://localhost:4050',
 
     // Capture traces on first retry only (saves storage)
     trace: 'on-first-retry',
@@ -88,11 +88,9 @@ export default defineConfig({
 
   // ─── Dev / Prod Server ─────────────────────────────────────────────────────
   webServer: {
-    // Locally reuse whatever is already running on :3000.
-    // In CI, build and start the production server (more realistic).
-    command: process.env.CI ? 'npm run build && npm run start' : 'npm run dev',
-    url: 'http://localhost:3000',
-    reuseExistingServer: !process.env.CI,
+    command: process.env.CI ? 'PORT=4050 npm run build && PORT=4050 npm run start' : 'PORT=4050 npm run dev',
+    url: 'http://localhost:4050',
+    reuseExistingServer: false,
     timeout: 180_000, // 3 min — build can be slow
     stdout: 'pipe',
     stderr: 'pipe',

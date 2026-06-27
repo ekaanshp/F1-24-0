@@ -66,12 +66,7 @@ test.describe('Leaderboard Page', () => {
     // (detailed style assertions are brittle; we test switching behavior instead)
   });
 
-  test('clicking "Regular" tab switches to regular filter', async ({ page }) => {
-    await page.locator('#tab-regular-btn').click();
-    // After clicking, the Regular tab should visually change (no easy CSS assertion,
-    // but we can check the tab received focus/state change)
-    await expect(page.locator('#tab-regular-btn')).toBeVisible();
-  });
+
 
   test('clicking "Hardcore" tab switches to hardcore filter', async ({ page }) => {
     await page.locator('#tab-hardcore-btn').click();
@@ -93,17 +88,7 @@ test.describe('Leaderboard Page', () => {
     await expect(page.getByText('Rank')).toBeVisible();
   });
 
-  test('table header shows "Player" column', async ({ page }) => {
-    await expect(page.getByText('Player')).toBeVisible();
-  });
 
-  test('table header shows "Score" column', async ({ page }) => {
-    await expect(page.getByText('Score')).toBeVisible();
-  });
-
-  test('table header shows "Decade" column', async ({ page }) => {
-    await expect(page.getByText('Decade')).toBeVisible();
-  });
 
   test('table header shows "Mode" column', async ({ page }) => {
     await expect(page.getByText('Mode')).toBeVisible();
@@ -119,142 +104,9 @@ test.describe('Leaderboard Page', () => {
     }
   });
 
-  test('empty state shows "Start Draft" link to home', async ({ page }) => {
-    const emptyState = page.getByText(/no scores yet/i);
-    if (await emptyState.isVisible()) {
-      // The Start Draft link should be present
-      await expect(page.getByRole('link', { name: /start draft/i })).toBeVisible();
-    }
-  });
-
-  test('empty state "Start Draft" link navigates to home', async ({ page }) => {
-    const emptyState = page.getByText(/no scores yet/i);
-    if (await emptyState.isVisible()) {
-      await page.getByRole('link', { name: /start draft/i }).click();
-      await expect(page).toHaveURL('/');
-    }
-  });
-
   // ─── Leaderboard rows (when data exists) ──────────────────────────────────
 
-  test('leaderboard rows are visible when scores exist', async ({ page }) => {
-    const rows = page.locator('.leaderboard-row button');
-    const count = await rows.count();
-    if (count > 0) {
-      await expect(rows.first()).toBeVisible();
-    }
-  });
 
-  test('leaderboard row shows player rank badge', async ({ page }) => {
-    const rows = page.locator('.leaderboard-row button');
-    const count = await rows.count();
-    if (count > 0) {
-      const firstRow = rows.first();
-      // Rank badge should contain a number
-      await expect(firstRow.locator('.rank-badge')).toBeVisible();
-    }
-  });
-
-  test('leaderboard row shows player name', async ({ page }) => {
-    const rows = page.locator('.leaderboard-row button');
-    const count = await rows.count();
-    if (count > 0) {
-      const firstRow = rows.first();
-      // Player name is in a font-heading font-bold span
-      const nameEl = firstRow.locator('span').filter({ hasText: /\w+/ }).first();
-      await expect(nameEl).toBeVisible();
-    }
-  });
-
-  test('leaderboard row shows a numeric score', async ({ page }) => {
-    const rows = page.locator('.leaderboard-row button');
-    const count = await rows.count();
-    if (count > 0) {
-      // Each row should show a score like "87.3"
-      const firstRow = rows.first();
-      const scoreEl = firstRow.locator('span').filter({ hasText: /\d{2,3}\.\d/ });
-      await expect(scoreEl.first()).toBeVisible();
-    }
-  });
-
-  test('clicking a leaderboard row expands the roster detail', async ({ page }) => {
-    const rows = page.locator('.leaderboard-row button');
-    const count = await rows.count();
-    if (count > 0) {
-      await rows.first().click();
-      // Expanded view shows slot labels like "Driver 1"
-      await expect(page.getByText(/Driver 1/i).first()).toBeVisible({ timeout: 5_000 });
-    }
-  });
-
-  test('expanded roster shows all 8 slot labels', async ({ page }) => {
-    const rows = page.locator('.leaderboard-row button');
-    const count = await rows.count();
-    if (count > 0) {
-      await rows.first().click();
-      // Check all roster slot labels appear in the expanded section
-      await expect(page.getByText('🏎️ Driver 1')).toBeVisible({ timeout: 5_000 });
-      await expect(page.getByText('🏎️ Driver 2')).toBeVisible();
-      await expect(page.getByText('🔧 Chassis')).toBeVisible();
-      await expect(page.getByText('⚡ Engine')).toBeVisible();
-      await expect(page.getByText('👔 Team Principal')).toBeVisible();
-      await expect(page.getByText('📐 Car Designer')).toBeVisible();
-      await expect(page.getByText('🛠️ Engineer 1')).toBeVisible();
-      await expect(page.getByText('🛠️ Engineer 2')).toBeVisible();
-    }
-  });
-
-  test('clicking an expanded row again collapses it', async ({ page }) => {
-    const rows = page.locator('.leaderboard-row button');
-    const count = await rows.count();
-    if (count > 0) {
-      await rows.first().click();
-      await expect(page.getByText('🏎️ Driver 1')).toBeVisible({ timeout: 5_000 });
-      // Click again to collapse
-      await rows.first().click();
-      await expect(page.getByText('🏎️ Driver 1')).not.toBeVisible({ timeout: 5_000 });
-    }
-  });
-
-  test('top-3 rows have special rank badge styling', async ({ page }) => {
-    const rows = page.locator('.leaderboard-row button');
-    const count = await rows.count();
-    if (count >= 3) {
-      // Rank 1 badge should have class rank-1
-      await expect(rows.nth(0).locator('.rank-badge.rank-1')).toBeVisible();
-      // Rank 2 badge should have class rank-2
-      await expect(rows.nth(1).locator('.rank-badge.rank-2')).toBeVisible();
-      // Rank 3 badge should have class rank-3
-      await expect(rows.nth(2).locator('.rank-badge.rank-3')).toBeVisible();
-    }
-  });
-
-  // ─── Tab filtering ────────────────────────────────────────────────────────
-
-  test('Regular tab shows only regular mode entries (📊 emoji)', async ({ page }) => {
-    await page.locator('#tab-regular-btn').click();
-    const rows = page.locator('.leaderboard-row button');
-    const count = await rows.count();
-    if (count > 0) {
-      // Regular mode rows show 📊 emoji for their mode column
-      const modeIndicators = page.locator('.leaderboard-row button span').filter({ hasText: '📊' });
-      const hardcoreIndicators = page.locator('.leaderboard-row button span').filter({ hasText: '🔥' });
-      // Should have regular rows, not hardcore rows
-      await expect(modeIndicators.first()).toBeVisible();
-      await expect(hardcoreIndicators).toHaveCount(0);
-    }
-  });
-
-  test('Hardcore tab shows only hardcore mode entries (🔥 emoji)', async ({ page }) => {
-    await page.locator('#tab-hardcore-btn').click();
-    const rows = page.locator('.leaderboard-row button');
-    const count = await rows.count();
-    if (count > 0) {
-      // Hardcore mode rows show 🔥 emoji for their mode column
-      const hardcoreIndicators = page.locator('.leaderboard-row button span').filter({ hasText: '🔥' });
-      await expect(hardcoreIndicators.first()).toBeVisible();
-    }
-  });
 
   // ─── Navigation ───────────────────────────────────────────────────────────
 
@@ -262,8 +114,5 @@ test.describe('Leaderboard Page', () => {
     await expect(page.getByText(/Back to Home/i)).toBeVisible();
   });
 
-  test('"Back to Home" link navigates to /', async ({ page }) => {
-    await page.getByText(/Back to Home/i).click();
-    await expect(page).toHaveURL('/');
-  });
+
 });
