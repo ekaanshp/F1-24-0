@@ -49,10 +49,6 @@ export default defineConfig({
     actionTimeout: 10_000,
     navigationTimeout: 30_000,
 
-    // Disable animations via Chrome launch arg (reduces flakiness)
-    launchOptions: {
-      args: ['--force-prefers-reduced-motion'],
-    },
   },
 
   // Global per-test timeout (includes all beforeEach/afterEach hooks)
