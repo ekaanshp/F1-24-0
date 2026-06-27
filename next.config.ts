@@ -1,5 +1,4 @@
 import type { NextConfig } from 'next';
-import { withSentryConfig } from '@sentry/nextjs';
 
 const nextConfig: NextConfig = {
   // Enable standalone output for Docker deployment
@@ -21,18 +20,4 @@ const nextConfig: NextConfig = {
   // },
 };
 
-// Wrap with Sentry (no-op if SENTRY_DSN is not set)
-export default withSentryConfig(nextConfig, {
-  // Sentry build-time options
-  org: process.env.SENTRY_ORG,
-  project: process.env.SENTRY_PROJECT,
-
-  // Suppress logs during build if no Sentry token
-  silent: !process.env.SENTRY_AUTH_TOKEN,
-
-  // Upload source maps for better error tracking
-  widenClientFileUpload: true,
-
-  // Disable Sentry telemetry
-  disableLogger: true,
-});
+export default nextConfig;

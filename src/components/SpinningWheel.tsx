@@ -109,7 +109,9 @@ export default function SpinningWheel({
 
     // Wait for the slot machine animation to finish
     // Era finishes at 4s, Team finishes at 5s. Wait 5.5s before showing options.
-    await new Promise((resolve) => setTimeout(resolve, 5500));
+    const prefersReducedMotion = typeof window !== 'undefined' ? window.matchMedia('(prefers-reduced-motion: reduce)').matches : false;
+    await new Promise((resolve) => setTimeout(resolve, prefersReducedMotion ? 0 : 5500));
+
 
     // Fetch all available options
     await fetchAllOptions(result.decade, result.team);
@@ -137,7 +139,8 @@ export default function SpinningWheel({
     setTeamReel(generateReel(result.team, TEAMS_POOL, 30));
 
     // Wait for the slot machine animation
-    await new Promise((resolve) => setTimeout(resolve, 5500));
+    const prefersReducedMotion = typeof window !== 'undefined' ? window.matchMedia('(prefers-reduced-motion: reduce)').matches : false;
+    await new Promise((resolve) => setTimeout(resolve, prefersReducedMotion ? 0 : 5500));
     await fetchAllOptions(result.decade, result.team);
   }, [currentSpin, lifelinesUsed.respinTeam, onUseLifeline, fetchAllOptions]);
 
@@ -162,7 +165,8 @@ export default function SpinningWheel({
     setTeamReel(generateReel(result.team, TEAMS_POOL, 30));
 
     // Wait for the slot machine animation
-    await new Promise((resolve) => setTimeout(resolve, 5500));
+    const prefersReducedMotion = typeof window !== 'undefined' ? window.matchMedia('(prefers-reduced-motion: reduce)').matches : false;
+    await new Promise((resolve) => setTimeout(resolve, prefersReducedMotion ? 0 : 5500));
     await fetchAllOptions(result.decade, result.team);
   }, [currentSpin, lifelinesUsed.respinBoth, onUseLifeline, fetchAllOptions]);
 

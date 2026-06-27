@@ -32,8 +32,7 @@ export function BackgroundGradientAnimation({
             height: '80%',
             top: 'calc(50% - 40%)',
             left: 'calc(50% - 40%)',
-            background: 'radial-gradient(circle at center, rgba(139, 0, 0, 0.8) 0%, rgba(92, 0, 0, 0) 50%)',
-            mixBlendMode: 'hard-light',
+            background: 'radial-gradient(circle at center, rgba(139, 0, 0, 0.4) 0%, rgba(92, 0, 0, 0) 50%)',
             animation: 'var(--animate-first)',
             transform: 'translateZ(0)',
           }}
@@ -47,8 +46,7 @@ export function BackgroundGradientAnimation({
             height: '70%',
             top: 'calc(50% - 35%)',
             left: 'calc(50% - 35%)',
-            background: 'radial-gradient(circle at center, rgba(92, 0, 0, 0.8) 0%, rgba(61, 0, 0, 0) 50%)',
-            mixBlendMode: 'hard-light',
+            background: 'radial-gradient(circle at center, rgba(92, 0, 0, 0.4) 0%, rgba(61, 0, 0, 0) 50%)',
             animation: 'var(--animate-second)',
             transform: 'translateZ(0)',
           }}
@@ -62,8 +60,7 @@ export function BackgroundGradientAnimation({
             height: '60%',
             top: 'calc(50% - 30%)',
             left: 'calc(50% - 30%)',
-            background: 'radial-gradient(circle at center, rgba(180, 80, 0, 0.6) 0%, rgba(100, 30, 0, 0) 50%)',
-            mixBlendMode: 'hard-light',
+            background: 'radial-gradient(circle at center, rgba(180, 80, 0, 0.3) 0%, rgba(100, 30, 0, 0) 50%)',
             animation: 'var(--animate-third)',
             transform: 'translateZ(0)',
           }}
@@ -77,8 +74,7 @@ export function BackgroundGradientAnimation({
             height: '80%',
             top: 'calc(50% - 40%)',
             left: 'calc(50% - 40%)',
-            background: 'radial-gradient(circle at center, rgba(225, 6, 0, 0.6) 0%, rgba(139, 0, 0, 0) 50%)',
-            mixBlendMode: 'hard-light',
+            background: 'radial-gradient(circle at center, rgba(225, 6, 0, 0.3) 0%, rgba(139, 0, 0, 0) 50%)',
             animation: 'var(--animate-fourth)',
             transform: 'translateZ(0)',
           }}
@@ -92,8 +88,7 @@ export function BackgroundGradientAnimation({
             height: '70%',
             top: 'calc(50% - 35%)',
             left: 'calc(50% - 35%)',
-            background: 'radial-gradient(circle at center, rgba(61, 0, 0, 0.8) 0%, rgba(30, 0, 0, 0) 50%)',
-            mixBlendMode: 'hard-light',
+            background: 'radial-gradient(circle at center, rgba(61, 0, 0, 0.4) 0%, rgba(30, 0, 0, 0) 50%)',
             animation: 'var(--animate-fifth)',
             transform: 'translateZ(0)',
           }}
