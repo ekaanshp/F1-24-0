@@ -27,8 +27,8 @@ export default function HomeClient({ topScores }: HomeClientProps) {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.2 }}
-            className="text-sm font-heading tracking-[0.3em] uppercase mb-4"
-            style={{ color: 'var(--text-muted)' }}
+            className="text-base font-heading tracking-[0.3em] uppercase mb-4"
+            style={{ color: 'var(--text-secondary)' }}
           >
             Welcome to
           </motion.p>
@@ -47,7 +47,7 @@ export default function HomeClient({ topScores }: HomeClientProps) {
             style={{ color: 'var(--text-secondary)' }}
           >
             Spin to land a random era and team. Draft 8 roster slots
-            from across F1 history — from drivers and their engineers all the way to the chassis. 
+            from across F1 history — from drivers and their engineers all the way to the chassis.
             Use your lifelines wisely! Can you win every race in a F1 season with your team?
           </motion.p>
         </motion.div>
@@ -95,7 +95,7 @@ export default function HomeClient({ topScores }: HomeClientProps) {
               <motion.button
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
-                className="btn-primary w-full text-lg py-4"
+                className="btn-primary btn-glow w-full text-lg py-4"
                 id="start-draft-btn"
               >
                 START REGULAR DRAFT
@@ -105,12 +105,7 @@ export default function HomeClient({ topScores }: HomeClientProps) {
               <motion.button
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
-                className="btn-primary w-full text-lg py-4"
-                style={{
-                  background: 'transparent',
-                  border: '2px solid var(--f1-red)',
-                  color: 'var(--f1-red)',
-                }}
+                className="btn-hardcore btn-glow-hardcore w-full text-lg py-4"
                 id="start-hardcore-draft-btn"
               >
                 🔥 START HARDCORE DRAFT 🔥
@@ -144,11 +139,10 @@ export default function HomeClient({ topScores }: HomeClientProps) {
                   className="flex items-center justify-between px-3 py-2 rounded-lg"
                   style={{ background: 'rgba(255, 255, 255, 0.03)' }}>
                   <div className="flex items-center gap-3">
-                    <span className={`font-heading text-xs font-bold w-6 text-center ${
-                      i === 0 ? 'text-[var(--accent-amber)]' :
-                      i === 1 ? 'text-gray-400' :
-                      i === 2 ? 'text-amber-700' : ''
-                    }`} style={i > 2 ? { color: 'var(--text-muted)' } : {}}>
+                    <span className={`font-heading text-xs font-bold w-6 text-center ${i === 0 ? 'text-[var(--accent-amber)]' :
+                        i === 1 ? 'text-gray-400' :
+                          i === 2 ? 'text-amber-700' : ''
+                      }`} style={i > 2 ? { color: 'var(--text-muted)' } : {}}>
                       #{i + 1}
                     </span>
                     <span className="text-sm font-medium">{score.playerName}</span>

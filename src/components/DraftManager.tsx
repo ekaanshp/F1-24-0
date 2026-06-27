@@ -175,7 +175,7 @@ export default function DraftManager({ gameMode = 'regular' }: DraftManagerProps
               whileTap={{ scale: 0.97 }}
               onClick={handleStartSpin}
               disabled={isSpinning}
-              className="btn-spin"
+              className="btn-spin btn-glow-spin"
               id="spin-btn"
             >
               🎰 SPIN FOR ERA &amp; TEAM

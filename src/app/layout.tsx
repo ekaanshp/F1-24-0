@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { BackgroundGradientAnimation } from '@/components/ui/background-gradient-animation';
 
 export const metadata: Metadata = {
   title: 'F1 TeamBuilder — Build Your Ultimate Team',
@@ -25,8 +26,10 @@ export default function RootLayout({
         <meta name="theme-color" content="#0D0D0D" />
       </head>
       <body className="antialiased">
+        <BackgroundGradientAnimation />
         <div className="relative z-10 min-h-screen">{children}</div>
       </body>
     </html>
   );
 }
+

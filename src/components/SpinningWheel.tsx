@@ -11,6 +11,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { spinForSlot, respinTeam, getAllPoolsForTeam } from '@/app/actions/game';
+import { CanvasRevealEffect } from '@/components/ui/canvas-reveal-effect';
 import type { ComponentOption, DraftSlot, GroupedOption, GameMode } from '@/types';
 
 interface SpinningWheelProps {
@@ -107,8 +108,8 @@ export default function SpinningWheel({
     setTeamReel(generateReel(result.team, TEAMS_POOL, 30));
 
     // Wait for the slot machine animation to finish
-    // Era finishes at 2s, Team finishes at 3s. Wait 3.5s before showing options.
-    await new Promise((resolve) => setTimeout(resolve, 3500));
+    // Era finishes at 4s, Team finishes at 5s. Wait 5.5s before showing options.
+    await new Promise((resolve) => setTimeout(resolve, 5500));
 
     // Fetch all available options
     await fetchAllOptions(result.decade, result.team);
@@ -136,7 +137,7 @@ export default function SpinningWheel({
     setTeamReel(generateReel(result.team, TEAMS_POOL, 30));
 
     // Wait for the slot machine animation
-    await new Promise((resolve) => setTimeout(resolve, 3500));
+    await new Promise((resolve) => setTimeout(resolve, 5500));
     await fetchAllOptions(result.decade, result.team);
   }, [currentSpin, lifelinesUsed.respinTeam, onUseLifeline, fetchAllOptions]);
 
@@ -161,7 +162,7 @@ export default function SpinningWheel({
     setTeamReel(generateReel(result.team, TEAMS_POOL, 30));
 
     // Wait for the slot machine animation
-    await new Promise((resolve) => setTimeout(resolve, 3500));
+    await new Promise((resolve) => setTimeout(resolve, 5500));
     await fetchAllOptions(result.decade, result.team);
   }, [currentSpin, lifelinesUsed.respinBoth, onUseLifeline, fetchAllOptions]);
 
@@ -210,7 +211,7 @@ export default function SpinningWheel({
                     <motion.div
                       initial={{ y: 0 }}
                       animate={{ y: -((decadeReel.length - 1) * 100) }}
-                      transition={{ duration: 2, ease: [0.1, 0.7, 0.1, 1] }}
+                      transition={{ duration: 4, ease: [0.1, 0.7, 0.1, 1] }}
                     >
                       {decadeReel.map((item, i) => (
                         <div key={i} className="h-[100px] flex items-center justify-center font-heading text-4xl md:text-5xl font-black" style={{ color: 'var(--accent-blue)' }}>
@@ -233,7 +234,7 @@ export default function SpinningWheel({
                     <motion.div
                       initial={{ y: 0 }}
                       animate={{ y: -((teamReel.length - 1) * 100) }}
-                      transition={{ duration: 3, ease: [0.1, 0.7, 0.1, 1] }}
+                      transition={{ duration: 5, ease: [0.1, 0.7, 0.1, 1] }}
                     >
                       {teamReel.map((item, i) => (
                         <div key={i} className="h-[100px] flex items-center justify-center font-heading text-3xl md:text-4xl font-black text-center px-4 leading-tight" style={{ color: 'var(--accent-amber)' }}>
@@ -361,54 +362,14 @@ export default function SpinningWheel({
                         {/* Options for this role */}
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                           {group.options.map((option, i) => (
-                            <motion.button
+                            <OptionCard
                               key={option.componentName}
-                              initial={{ opacity: 0, y: 20 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{ delay: i * 0.03, type: 'spring', stiffness: 400 }}
-                              onClick={() => handlePickComponent(option, group)}
-                              className="card-option text-left group flex flex-col justify-between h-full min-h-[120px] p-4 cursor-pointer"
-                              id={`option-${group.role}-${i}`}
-                            >
-                              <div>
-                                <h4 className="font-heading text-sm font-bold tracking-wide mb-3 group-hover:text-[var(--accent-blue)] transition-colors line-clamp-2">
-                                  {option.displayName || option.componentName}
-                                </h4>
-
-                                {/* Stats */}
-                                {gameMode !== 'hardcore' && (
-                                  <div className="grid grid-cols-3 gap-1 py-1.5 px-2.5 rounded-lg text-xs"
-                                    style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)' }}>
-                                    <div className="text-center">
-                                      <span className="block text-[9px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Wins</span>
-                                      <span className="font-heading font-bold text-xs" style={{ color: 'var(--accent-amber)' }}>
-                                        {option.wins}
-                                      </span>
-                                    </div>
-                                    <div className="text-center" style={{ borderLeft: '1px solid var(--border-subtle)', borderRight: '1px solid var(--border-subtle)' }}>
-                                      <span className="block text-[9px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Poles</span>
-                                      <span className="font-heading font-bold text-xs" style={{ color: 'var(--accent-blue)' }}>
-                                        {option.poles}
-                                      </span>
-                                    </div>
-                                    <div className="text-center">
-                                      <span className="block text-[9px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Pts</span>
-                                      <span className="font-heading font-bold text-xs" style={{ color: 'var(--accent-green)' }}>
-                                        {option.points}
-                                      </span>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-
-                              {/* Select indicator */}
-                              <div className="mt-3 text-center shrink-0">
-                                <span className="text-[10px] font-heading uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity"
-                                  style={{ color: 'var(--accent-blue)' }}>
-                                  ▸ SELECT ◂
-                                </span>
-                              </div>
-                            </motion.button>
+                              option={option}
+                              group={group}
+                              index={i}
+                              gameMode={gameMode}
+                              onPick={handlePickComponent}
+                            />
                           ))}
                         </div>
                       </div>
@@ -421,5 +382,108 @@ export default function SpinningWheel({
         </motion.div>
       </motion.div>
     </AnimatePresence>
+  );
+}
+
+// =============================================================================
+// OptionCard — Individual card with canvas-reveal hover effect
+// =============================================================================
+
+interface OptionCardProps {
+  option: ComponentOption;
+  group: GroupedOption;
+  index: number;
+  gameMode: GameMode;
+  onPick: (option: ComponentOption, group: GroupedOption) => void;
+}
+
+function OptionCard({ option, group, index, gameMode, onPick }: OptionCardProps) {
+  const [hovered, setHovered] = useState(false);
+
+  return (
+    <motion.button
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: index * 0.03, type: 'spring', stiffness: 400 }}
+      onClick={() => onPick(option, group)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      className="card-option text-left group flex flex-col justify-between h-full min-h-[120px] p-4 cursor-pointer"
+      id={`option-${group.role}-${index}`}
+    >
+      {/* Canvas reveal effect on hover */}
+      <AnimatePresence>
+        {hovered && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="absolute inset-0 z-0"
+          >
+            <CanvasRevealEffect
+              animationSpeed={5}
+              containerClassName="bg-transparent"
+              colors={[
+                [99, 155, 210],
+                [59, 130, 246],
+              ]}
+              opacities={[0.2, 0.2, 0.2, 0.2, 0.2, 0.4, 0.4, 0.4, 0.4, 1]}
+              dotSize={2}
+              showGradient={false}
+            />
+            {/* Radial fade mask */}
+            <div
+              className="absolute inset-0"
+              style={{
+                maskImage: 'radial-gradient(400px at center, white, transparent)',
+                WebkitMaskImage: 'radial-gradient(400px at center, white, transparent)',
+                background: 'rgba(10, 10, 15, 0.5)',
+              }}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Card content */}
+      <div className="relative z-10">
+        <h4 className="font-heading text-sm font-bold tracking-wide mb-3 group-hover:text-[var(--accent-blue)] transition-colors line-clamp-2">
+          {option.displayName || option.componentName}
+        </h4>
+
+        {/* Stats */}
+        {gameMode !== 'hardcore' && (
+          <div className="grid grid-cols-3 gap-1 py-1.5 px-2.5 rounded-lg text-xs"
+            style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-subtle)' }}>
+            <div className="text-center">
+              <span className="block text-[9px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Wins</span>
+              <span className="font-heading font-bold text-xs" style={{ color: 'var(--accent-purple)' }}>
+                {option.wins}
+              </span>
+            </div>
+            <div className="text-center" style={{ borderLeft: '1px solid var(--border-subtle)', borderRight: '1px solid var(--border-subtle)' }}>
+              <span className="block text-[9px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Poles</span>
+              <span className="font-heading font-bold text-xs" style={{ color: 'var(--accent-green)' }}>
+                {option.poles}
+              </span>
+            </div>
+            <div className="text-center">
+              <span className="block text-[9px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Pts</span>
+              <span className="font-heading font-bold text-xs" style={{ color: 'var(--accent-amber)' }}>
+                {option.points}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Select indicator */}
+      <div className="relative z-10 mt-3 text-center shrink-0">
+        <span className="text-[10px] font-heading uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity"
+          style={{ color: 'var(--accent-blue)' }}>
+          ▸ SELECT ◂
+        </span>
+      </div>
+    </motion.button>
   );
 }
