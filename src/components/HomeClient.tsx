@@ -111,6 +111,28 @@ export default function HomeClient({ topScores }: HomeClientProps) {
                 🔥 START HARDCORE DRAFT 🔥
               </motion.button>
             </Link>
+
+            {/* Divider */}
+            <div className="flex items-center gap-3 my-1">
+              <div className="flex-1 h-px" style={{ background: 'var(--border-subtle)' }} />
+              <span className="text-[10px] uppercase tracking-widest font-heading"
+                style={{ color: 'var(--text-muted)' }}>or</span>
+              <div className="flex-1 h-px" style={{ background: 'var(--border-subtle)' }} />
+            </div>
+
+            <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
+              <Link
+                href="/leaderboards"
+                className="btn-secondary w-full text-sm py-3 text-center block"
+                id="view-leaderboard-btn"
+                style={{
+                  border: '1px solid var(--border-subtle)',
+                  background: 'rgba(255, 255, 255, 0.03)',
+                }}
+              >
+                🏆 VIEW LEADERBOARD
+              </Link>
+            </motion.div>
           </div>
         </motion.div>
 

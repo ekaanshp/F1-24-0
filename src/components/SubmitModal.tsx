@@ -25,17 +25,17 @@ function getPerformanceMetrics(score: number): { grade: string; prediction: stri
   let gradeColor = 'var(--f1-red)';
   let wins = 0;
 
-  if (score >= 98) { grade = 'S+'; gradeColor = '#ffb703'; wins = 24; }
-  else if (score >= 95) { grade = 'S'; gradeColor = '#ffb703'; wins = 22; }
-  else if (score >= 90) { grade = 'A+'; gradeColor = '#4ade80'; wins = 19; }
-  else if (score >= 85) { grade = 'A'; gradeColor = '#4ade80'; wins = 14; }
-  else if (score >= 80) { grade = 'B'; gradeColor = '#60a5fa'; wins = 9; }
-  else if (score >= 75) { grade = 'C'; gradeColor = '#facc15'; wins = 4; }
-  else if (score >= 70) { grade = 'D'; gradeColor = '#fb923c'; wins = 1; }
+  if (score >= 93) { grade = 'S+'; gradeColor = '#ffb703'; wins = 24; }
+  else if (score >= 85) { grade = 'S'; gradeColor = '#ffb703'; wins = 20; }
+  else if (score >= 80) { grade = 'A+'; gradeColor = '#4ade80'; wins = 16; }
+  else if (score >= 76) { grade = 'A'; gradeColor = '#4ade80'; wins = 12; }
+  else if (score >= 69) { grade = 'B'; gradeColor = '#60a5fa'; wins = 7; }
+  else if (score >= 61) { grade = 'C'; gradeColor = '#facc15'; wins = 3; }
+  else if (score >= 51) { grade = 'D'; gradeColor = '#fb923c'; wins = 1; }
   else { grade = 'F'; gradeColor = '#f87171'; wins = 0; }
 
-  if (score < 98 && score >= 70) {
-    const pct = (score - 70) / 28;
+  if (score < 93 && score >= 51) {
+    const pct = (score - 51) / 42;
     wins = Math.round(Math.pow(pct, 1.5) * 24);
   }
 
@@ -330,7 +330,7 @@ export default function SubmitModal({
           {/* Action buttons */}
           {!isLoadingScore && (
             <>
-              {teamScore !== null && teamScore >= 95 && (
+              {teamScore !== null && teamScore >= 85 && (
                 <>
                   <ConfettiFireworks />
                   <ConfettiSideCannons />
