@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { BackgroundGradientAnimation } from '@/components/ui/background-gradient-animation';
+import { Analytics } from '@vercel/analytics/next';
 
 export const metadata: Metadata = {
   title: 'F1 TeamBuilder — Build Your Ultimate Team',
@@ -28,6 +29,7 @@ export default function RootLayout({
       <body className="antialiased">
         <BackgroundGradientAnimation />
         <div className="relative z-10 min-h-screen">{children}</div>
+        <Analytics />
       </body>
     </html>
   );
